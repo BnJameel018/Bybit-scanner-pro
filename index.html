@@ -105,6 +105,11 @@ h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.
 .grid dd{margin:2px 0 0; font:500 14px var(--mono); overflow-wrap:anywhere}
 .grid dd small{display:block; font:400 12px var(--sans); color:var(--mute)}
 .empty{padding:28px 8px; text-align:center; color:var(--mute); font-size:14px}
+.tl{margin:0; padding:10px 0 0; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:6px; list-style:none}
+.tl li{display:grid; grid-template-columns:7.5em 1fr; gap:8px; font-size:12.5px; line-height:1.4}
+.tl li b{font:600 11px var(--sans); letter-spacing:.06em; text-transform:uppercase; color:var(--mute); padding-top:1px}
+.tl li span{min-width:0; overflow-wrap:anywhere}
+.tl li.hot span{color:var(--ink); font-weight:600}
 
 details.rules{border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 14px}
 details.rules summary{cursor:pointer; font-weight:600; font-size:14px}
@@ -201,19 +206,19 @@ function prevCandleT(now, HD) {
 // States: fresh -> (close below) broken -> (later close above) reclaimed. A second close below ends it.
 function walkSupport(htf, S, start) {
   const L = htf.length - 1;
-  let state = 'fresh';
+  let state = 'fresh', brokeT = null, reclaimT = null;
   for (let k = start; k < L; k++) {
     const c = htf[k];
     if (state === 'fresh') {
-      if (c.l <= S) { if (c.c > S) return null; state = 'broken'; }
+      if (c.l <= S) { if (c.c > S) return null; state = 'broken'; brokeT = c.t; }
     } else if (state === 'broken') {
-      if (c.c > S) state = 'reclaimed';
+      if (c.c > S) { state = 'reclaimed'; reclaimT = c.t; }
     } else if (c.l <= S) return null;
   }
   const D = htf[L];
   if (!(D.l <= S && D.c > S)) return null;
   if (state === 'broken') return null;
-  return { reclaimed: state === 'reclaimed' };
+  return { reclaimed: state === 'reclaimed', brokeT, reclaimT };
 }
 
 // Rejection-timeframe candles, oldest first, closed only. Returns every support the last candle rejects.
@@ -227,7 +232,7 @@ function findRejections(htf, M) {
     const w = walkSupport(htf, S, i + 2);
     if (!w || seenS.has(S)) continue;
     seenS.add(S);
-    out.push({ S, kind: 'support', reclaimed: w.reclaimed, srcT: htf[i].t, createdT: htf[i + 1].t + M.HD, dayT: D.t });
+    out.push({ S, kind: 'support', reclaimed: w.reclaimed, brokeT: w.brokeT, reclaimT: w.reclaimT, srcT: htf[i].t, createdT: htf[i + 1].t + M.HD, dayT: D.t });
   }
   for (let j = 0; j + 1 < L; j++) {
     if (!(bull(htf[j]) && bear(htf[j + 1]))) continue;
@@ -238,7 +243,7 @@ function findRejections(htf, M) {
     const w = walkSupport(htf, R, b + 1);
     if (!w || seenS.has(R)) continue;
     seenS.add(R);
-    out.push({ S: R, kind: 'flipped', reclaimed: w.reclaimed, srcT: htf[j].t, createdT: htf[b].t + M.HD, dayT: D.t });
+    out.push({ S: R, kind: 'flipped', reclaimed: w.reclaimed, brokeT: w.brokeT, reclaimT: w.reclaimT, flipT: htf[b].t, srcT: htf[j].t, createdT: htf[b].t + M.HD, dayT: D.t });
   }
   return out;
 }
@@ -271,11 +276,11 @@ function tagRejections(rejs, htf, M) {
 function swingHighs(ltf, LD) {
   const out = [];
   for (let i = 1; i + 1 < ltf.length; i++)
-    if (ltf[i].h > ltf[i - 1].h && ltf[i].h > ltf[i + 1].h) out.push({ h: ltf[i].h, confT: ltf[i + 1].t + LD });
+    if (ltf[i].h > ltf[i - 1].h && ltf[i].h > ltf[i + 1].h) out.push({ h: ltf[i].h, t: ltf[i].t, confT: ltf[i + 1].t + LD });
   return out;
 }
 
-const RK = ['S', 'kind', 'reclaimed', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
+const RK = ['S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
 const pick = r => { const o = {}; RK.forEach(k => { o[k] = r[k]; }); return o; };
 
 // Break-timeframe candles (mtf) and swing-high-timeframe candles (ltf), oldest first, closed only.
@@ -295,54 +300,54 @@ function evaluate(rej, mtf, ltf, M) {
   const chk = (R, breakCloseT, fromT) => {
     let best = null;
     for (const s of shs) if (s.h > R && s.confT <= breakCloseT && (best === null || s.h < best.h)) best = s;
-    if (best === null) return { SH: null, done: true, t: null };
+    if (best === null) return { SH: null, SHt: null, done: true, t: null };
     const from = Math.max(fromT, best.confT);
-    for (const k of ltf) if (k.t >= from && k.c > best.h) return { SH: best.h, done: true, t: k.t + M.LD };
-    return { SH: best.h, done: false, t: null };
+    for (const k of ltf) if (k.t >= from && k.c > best.h) return { SH: best.h, SHt: best.t, done: true, t: k.t + M.LD };
+    return { SH: best.h, SHt: best.t, done: false, t: null };
   };
-  const track = (R, kb, fromIdx) => {
+  const track = (R, resT, kb, fromIdx) => {
     if (kb >= 0) {
       const bc = mtf[kb].t + M.MD, c = chk(R, bc, mtf[fromIdx].t);
-      return { R, mtfBroken: true, mtfT: mtf[kb].t, SH: c.SH, ltfDone: c.done, ltfT: c.t, done: c.done, doneT: Math.max(bc, c.t || 0) };
+      return { R, resT, mtfBroken: true, mtfT: mtf[kb].t, SH: c.SH, shT: c.SHt, ltfDone: c.done, ltfT: c.t, done: c.done, doneT: Math.max(bc, c.t || 0) };
     }
     const c = chk(R, Infinity, mtf[fromIdx].t);
-    return { R, mtfBroken: false, mtfT: null, SH: c.SH, ltfDone: c.done, ltfT: c.t, done: false, doneT: null };
+    return { R, resT, mtfBroken: false, mtfT: null, SH: c.SH, shT: c.SHt, ltfDone: c.done, ltfT: c.t, done: false, doneT: null };
   };
 
   // Original resistance: lowest valid one above the support that was complete before the touch.
-  let R = null;
+  let R = null, Rt = null;
   for (let j = 0; j + 1 < t1; j++) {
     if (!(bull(mtf[j]) && bear(mtf[j + 1]))) continue;
     const r = mtf[j].c;
     if (!(r > S)) continue;
     let ok = true;
     for (let m = j + 1; m < t1; m++) { if (mtf[m].c > r) { ok = false; break; } }
-    if (ok && (R === null || r < R)) R = r;
+    if (ok && (R === null || r < R)) { R = r; Rt = mtf[j].t; }
   }
   let orig = null;
   if (R !== null) {
     let kb = -1;
     for (let k = t1; k <= last; k++) { if (mtf[k].c > R) { kb = k; break; } }
-    orig = track(R, kb, t1);
+    orig = track(R, Rt, kb, t1);
   }
 
   // Exception: a later candle goes below the first touch's low and closes above the support.
   let ex = null;
   for (let s = t1 + 1; s <= last && !ex; s++) {
     if (!(mtf[s].l < low1 && mtf[s].c > S)) continue;
-    let R2 = null;
+    let R2 = null, R2t = null;
     for (let j = Math.max(0, t1 - 1); j + 1 < s; j++) {
       if (!(bull(mtf[j]) && bear(mtf[j + 1]))) continue;
       const r = mtf[j].c;
       if (!(r > S)) continue;
       let ok = true;
       for (let m = j + 1; m < s; m++) { if (mtf[m].c > r) { ok = false; break; } }
-      if (ok && (R2 === null || r > R2)) R2 = r;
+      if (ok && (R2 === null || r > R2)) { R2 = r; R2t = mtf[j].t; }
     }
     if (R2 === null) continue;
     let kb2 = -1;
     for (let k = s; k <= last; k++) { if (mtf[k].c > R2) { kb2 = k; break; } }
-    ex = Object.assign(track(R2, kb2, s), { s });
+    ex = Object.assign(track(R2, R2t, kb2, s), { s });
   }
 
   const mk = extra => Object.assign(pick(rej), { touchT: mtf[t1].t, low1 }, extra);
@@ -487,6 +492,24 @@ function card(s) {
   if (s.lhr) rows.push(`<div><dt>Support age</dt><dd>${Math.floor(s.age / DAY)} days</dd></div>`);
   if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} resistance</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
 
+  // Timeline: the exact candles to look for on the chart, oldest first. Dates are UTC candle opens.
+  const cd = t => (mode === 'W1' ? 'week of ' : '') + dfmt(t);
+  const tl = [];
+  if (s.kind === 'flipped') {
+    tl.push(['Resistance', `${n[0]} bullish candle of ${cd(s.srcT)}, closed at ${fp(s.S)}`]);
+    tl.push(['Closed above', `${n[0]} candle of ${cd(s.flipT)}. It became support.`]);
+  } else {
+    tl.push(['Support', `${n[0]} bearish candle of ${cd(s.srcT)}, closed at ${fp(s.S)}. Next candle is bullish.`]);
+  }
+  if (s.reclaimed) {
+    tl.push(['Broken', `${n[0]} candle of ${cd(s.brokeT)} closed below ${fp(s.S)}`]);
+    tl.push(['Reclaimed', `${n[0]} candle of ${cd(s.reclaimT)} closed back above`]);
+  }
+  tl.push(['Rejected', `${n[0]} candle of ${cd(s.dayT)} (the last closed one). First touch ${tfmt(s.touchT)}, low ${fp(s.low1)}.`, 1]);
+  if (s.resT) tl.push(['Resistance', `${n[1]} bullish candle of ${tfmt(s.resT)}, closed at ${fp(s.R)}`]);
+  if (s.shT) tl.push([n[2] + ' swing high', `${tfmt(s.shT)}, high ${fp(s.SH)}`]);
+  const tlHtml = `<ul class="tl">${tl.map(x => `<li${x[2] ? ' class="hot"' : ''}><b>${x[0]}</b><span>${x[1]}</span></li>`).join('')}</ul>`;
+
   return `<article class="card">
     <div class="head">
       <a class="sym" href="https://www.bybit.com/en/trade/spot/${base}/USDT" target="_blank" rel="noopener">${base}<span>/USDT</span></a>
@@ -495,6 +518,7 @@ function card(s) {
     </div>
     <div class="chips">${chips.join('')}</div>
     <dl class="grid">${rows.join('')}</dl>
+    ${tlHtml}
   </article>`;
 }
 
