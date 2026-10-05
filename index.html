@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SNR Scanner">
+<title>SNR Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one phone-width column. Header, timeframe mode switch, settings, progress, four result columns (2x2 tabs), fixed Scan/Stop bar. */
+:root{
+  --bg:#edf0f2; --card:#ffffff; --ink:#0f1a22; --mute:#58666f; --line:#d5dce0;
+  --accent:#0b63d1; --on-accent:#ffffff;
+  --go:#0a7447; --go-bg:#d9f1e6;
+  --watch:#8a5200; --watch-bg:#f8e8c9;
+  --idle:#58666f; --idle-bg:#e3e8eb;
+  --stop:#b3261e; --field:#f6f8f9;
+  --sans:'Instrument Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0b1015; --card:#131a21; --ink:#e6ecf0; --mute:#8d9ba6; --line:#24303a;
+    --accent:#5aa7ff; --on-accent:#06121f;
+    --go:#41dc9a; --go-bg:#0f2e22;
+    --watch:#f0b44f; --watch-bg:#33290f;
+    --idle:#8d9ba6; --idle-bg:#1b252e;
+    --stop:#ff7b72; --field:#0f151b;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:400 15px/1.45 var(--sans);
+  padding:max(16px,env(safe-area-inset-top)) 16px calc(104px + env(safe-area-inset-bottom));
+}
+.wrap{max-width:560px; margin:0 auto; display:flex; flex-direction:column; gap:16px}
+h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.02em; text-wrap:balance}
+.sub{margin:6px 0 0; color:var(--mute); font-size:13.5px}
+.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+.mode{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+.mode button{
+  appearance:none; border:0; background:var(--card); color:var(--mute); cursor:pointer;
+  padding:12px 6px; font:600 13.5px var(--mono);
+}
+.mode button[aria-pressed=true]{background:var(--accent); color:var(--on-accent)}
+.mode button:disabled{opacity:.6; cursor:default}
+
+.settings{display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; align-items:end}
+.field{display:flex; flex-direction:column; gap:5px; min-width:0}
+.field label{font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--mute); font-weight:600}
+.field input[type=number]{
+  width:100%; height:42px; border:1px solid var(--line); background:var(--field); color:var(--ink);
+  border-radius:8px; padding:0 12px; font:500 15px var(--mono);
+}
+.field input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.check{display:flex; align-items:center; gap:10px; grid-column:1/-1; font-size:14px; color:var(--ink)}
+.check input{width:20px; height:20px; accent-color:var(--accent)}
+
+.status{display:flex; flex-direction:column; gap:8px}
+.status-row{display:flex; justify-content:space-between; gap:12px; font-size:13.5px; flex-wrap:wrap}
+.status-row .state{font-weight:600}
+.status-row .meta{color:var(--mute)}
+.bar{height:6px; background:var(--line); border-radius:3px; overflow:hidden}
+.bar i{display:block; height:100%; width:0; background:var(--accent); transition:width .2s}
+.hint{font-size:12.5px; color:var(--mute); margin:0}
+.err{font-size:13.5px; color:var(--stop); margin:0}
+
+.tabs{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+.tab{
+  appearance:none; border:0; background:var(--card); color:var(--mute); cursor:pointer;
+  padding:12px 12px; font:600 13px var(--sans); display:flex; gap:8px; align-items:center; justify-content:space-between; text-align:left;
+}
+.tab b{font:600 17px var(--mono); color:var(--ink)}
+.tab[aria-selected=true]{background:var(--accent); color:var(--on-accent)}
+.tab[aria-selected=true] b{color:var(--on-accent)}
+
+.list{display:flex; flex-direction:column; gap:10px}
+.card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:12px}
+.head{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap}
+.sym{font:600 18px var(--mono); color:var(--ink); text-decoration:none}
+.sym span{color:var(--mute); font-weight:400}
+.px{margin-left:auto; font:500 14px var(--mono); color:var(--mute)}
+.new{font:700 10.5px var(--sans); letter-spacing:.08em; padding:2px 7px; border-radius:99px; background:var(--accent); color:var(--on-accent)}
+.chips{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+.chip{font:600 12px var(--sans); padding:3px 9px; border-radius:99px}
+.chip.go{background:var(--go-bg); color:var(--go)}
+.chip.watch{background:var(--watch-bg); color:var(--watch)}
+.chip.idle{background:var(--idle-bg); color:var(--idle)}
+.rm{
+  margin-left:auto; appearance:none; border:1px solid var(--line); background:transparent; color:var(--mute);
+  font:600 12px var(--sans); border-radius:99px; padding:3px 11px; cursor:pointer;
+}
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; margin:0}
+.grid>div{min-width:0}
+.grid dt{font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--mute); font-weight:600}
+.grid dd{margin:2px 0 0; font:500 14px var(--mono); overflow-wrap:anywhere}
+.grid dd small{display:block; font:400 12px var(--sans); color:var(--mute)}
+.empty{padding:28px 8px; text-align:center; color:var(--mute); font-size:14px}
+
+details.rules{border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 14px}
+details.rules summary{cursor:pointer; font-weight:600; font-size:14px}
+details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-size:13.5px; display:flex; flex-direction:column; gap:6px}
+.foot{display:flex; justify-content:space-between; gap:12px; font-size:12.5px; color:var(--mute)}
+.foot button{appearance:none; background:none; border:0; color:var(--accent); font:600 12.5px var(--sans); padding:0; cursor:pointer}
+
+.dock{
+  position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(to top,var(--bg) 70%,transparent);
+}
+.dock button{
+  display:block; width:100%; max-width:560px; margin:0 auto; height:54px; border-radius:12px; cursor:pointer;
+  font:700 17px var(--sans); letter-spacing:.02em; border:2px solid var(--accent); background:var(--accent); color:var(--on-accent);
+}
+.dock button.stop{background:var(--bg); color:var(--stop); border-color:var(--stop)}
+@media (prefers-reduced-motion:reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>SNR Scanner</h1>
+    <p class="sub" id="dayline">Bybit spot USDT pairs. Checks the last closed candle on the rejection timeframe.</p>
+  </header>
+
+  <section aria-label="Timeframes">
+    <div class="mode" role="group" aria-label="Timeframe set">
+      <button type="button" id="m-D1" aria-pressed="true">D1 · H4 · H1</button>
+      <button type="button" id="m-W1" aria-pressed="false">W1 · D1 · H4</button>
+    </div>
+    <p class="hint" id="modeHint" style="margin-top:8px"></p>
+  </section>
+
+  <section class="settings" aria-label="Scan settings">
+    <div class="field"><label for="maxPrice">Max price (0 = no limit)</label><input id="maxPrice" type="number" inputmode="decimal" min="0" step="any" value="0"></div>
+    <div class="field"><label for="minVol">Min 24h volume (USDT)</label><input id="minVol" type="number" inputmode="decimal" min="0" step="any" value="0"></div>
+    <label class="check"><input id="sound" type="checkbox" checked> Beep and vibrate on a new trigger</label>
+  </section>
+
+  <section class="status" aria-live="polite">
+    <div class="status-row"><span class="state" id="state">Ready</span><span class="meta mono" id="meta"></span></div>
+    <div class="bar"><i id="fill"></i></div>
+    <p class="hint" id="hint">Keep this screen open while scanning. A full scan takes a minute or two.</p>
+    <p class="err" id="err" hidden></p>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Results">
+    <button class="tab" role="tab" id="tab-snr" data-tab="snr" aria-selected="true">SNR<b id="n-snr">0</b></button>
+    <button class="tab" role="tab" id="tab-lhr" data-tab="lhr" aria-selected="false">SNR + LHR<b id="n-lhr">0</b></button>
+    <button class="tab" role="tab" id="tab-crt" data-tab="crt" aria-selected="false">SNR + CRT<b id="n-crt">0</b></button>
+    <button class="tab" role="tab" id="tab-both" data-tab="both" aria-selected="false">SNR + LHR + CRT<b id="n-both">0</b></button>
+  </nav>
+
+  <main class="list" id="list"></main>
+
+  <details class="rules">
+    <summary>How the rules are read</summary>
+    <ol>
+      <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. Only the last closed candle on the rejection timeframe is checked for a rejection.</li>
+      <li>Support: a bearish candle followed by a bullish one, at the bearish candle's close. Touches count from the candle after the bullish one. A resistance (bullish candle then bearish, at the bullish close) that a candle has closed above also becomes a support, with touches counted after that closing candle.</li>
+      <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it.</li>
+      <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
+      <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
+      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the lowest confirmed swing high above that resistance, in either order. A swing high is a candle whose high is above both neighbours. With no swing high above the resistance, the break alone triggers.</li>
+      <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
+      <li>A pair is dropped once price has reached the lowest valid resistance on the rejection timeframe after the first touch.</li>
+      <li>LHR: the support is at least a week old (4 weeks in W1 mode), counted from the close of its bullish candle to the open of the rejection candle. Flipped resistances are not checked for this. CRT: the rejection candle trades below the low of an earlier candle that nobody had traded below since, and closes back above that low.</li>
+      <li>Setups still waiting for a trigger are saved on this phone and rechecked on each scan. Triggered setups stay listed for 3 days (14 days in W1 mode).</li>
+    </ol>
+  </details>
+
+  <div class="foot"><span id="seenline"></span><button id="clearSeen" type="button">Reset NEW markers</button></div>
+</div>
+
+<div class="dock"><button id="go" type="button">Scan</button></div>
+
+<script>
+// ==== LOGIC START
+const DAY = 864e5, WEEK = 7 * DAY, H1MS = 36e5, H4MS = 144e5;
+const MODES = {
+  D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], lhr: WEEK, keep: 3 * DAY, reset: 'daily' },
+  W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], lhr: 4 * WEEK, keep: 14 * DAY, reset: 'weekly' }
+};
+const bull = k => k.c > k.o, bear = k => k.c < k.o;
+
+// Open time of the last closed candle on the rejection timeframe. Weekly candles open on Mondays 00:00 UTC.
+function prevCandleT(now, HD) {
+  const off = HD === WEEK ? 4 * DAY : 0;
+  return Math.floor((now - off) / HD) * HD + off - HD;
+}
+
+// Walks the candles from `start` up to (not including) the last one and says whether the last one is a valid rejection.
+// States: fresh -> (close below) broken -> (later close above) reclaimed. A second close below ends it.
+function walkSupport(htf, S, start) {
+  const L = htf.length - 1;
+  let state = 'fresh';
+  for (let k = start; k < L; k++) {
+    const c = htf[k];
+    if (state === 'fresh') {
+      if (c.l <= S) { if (c.c > S) return null; state = 'broken'; }
+    } else if (state === 'broken') {
+      if (c.c > S) state = 'reclaimed';
+    } else if (c.l <= S) return null;
+  }
+  const D = htf[L];
+  if (!(D.l <= S && D.c > S)) return null;
+  if (state === 'broken') return null;
+  return { reclaimed: state === 'reclaimed' };
+}
+
+// Rejection-timeframe candles, oldest first, closed only. Returns every support the last candle rejects.
+function findRejections(htf, M) {
+  const L = htf.length - 1, out = [], seenS = new Set();
+  if (L < 3) return out;
+  const D = htf[L];
+  for (let i = 0; i + 2 <= L; i++) {
+    if (!(bear(htf[i]) && bull(htf[i + 1]))) continue;
+    const S = htf[i].c;
+    const w = walkSupport(htf, S, i + 2);
+    if (!w || seenS.has(S)) continue;
+    seenS.add(S);
+    out.push({ S, kind: 'support', reclaimed: w.reclaimed, srcT: htf[i].t, createdT: htf[i + 1].t + M.HD, dayT: D.t });
+  }
+  for (let j = 0; j + 1 < L; j++) {
+    if (!(bull(htf[j]) && bear(htf[j + 1]))) continue;
+    const R = htf[j].c;
+    let b = -1;
+    for (let k = j + 2; k < L; k++) { if (htf[k].c > R) { b = k; break; } }
+    if (b < 0) continue;
+    const w = walkSupport(htf, R, b + 1);
+    if (!w || seenS.has(R)) continue;
+    seenS.add(R);
+    out.push({ S: R, kind: 'flipped', reclaimed: w.reclaimed, srcT: htf[j].t, createdT: htf[b].t + M.HD, dayT: D.t });
+  }
+  return out;
+}
+
+// CRT: the last candle trades below an earlier candle's low that nobody traded below since, then closes back above it.
+function crtInfo(htf) {
+  const L = htf.length - 1;
+  if (L < 1) return null;
+  const D = htf[L];
+  let minLow = Infinity;
+  for (let x = L - 1; x >= 0; x--) {
+    const X = htf[x];
+    if (minLow >= X.l && D.l < X.l && D.c > X.l) return { low: X.l, t: X.t };
+    if (X.l < minLow) minLow = X.l;
+  }
+  return null;
+}
+
+// Adds age, LHR and CRT tags. LHR never applies to a flipped resistance.
+function tagRejections(rejs, htf, M) {
+  const D = htf[htf.length - 1], crt = crtInfo(htf);
+  rejs.forEach(r => {
+    r.age = D.t - r.createdT;
+    r.lhr = r.kind === 'support' && r.age >= M.lhr;
+    r.crt = !!crt; r.crtLow = crt ? crt.low : null; r.crtT = crt ? crt.t : null;
+  });
+  return rejs;
+}
+
+function swingHighs(ltf, LD) {
+  const out = [];
+  for (let i = 1; i + 1 < ltf.length; i++)
+    if (ltf[i].h > ltf[i - 1].h && ltf[i].h > ltf[i + 1].h) out.push({ h: ltf[i].h, confT: ltf[i + 1].t + LD });
+  return out;
+}
+
+const RK = ['S', 'kind', 'reclaimed', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
+const pick = r => { const o = {}; RK.forEach(k => { o[k] = r[k]; }); return o; };
+
+// Break-timeframe candles (mtf) and swing-high-timeframe candles (ltf), oldest first, closed only.
+// Returns null when no valid resistance exists.
+function evaluate(rej, mtf, ltf, M) {
+  const S = rej.S, dayT = rej.dayT, dayEnd = dayT + M.HD, last = mtf.length - 1;
+  let t1 = -1;
+  for (let k = 0; k <= last; k++) {
+    const x = mtf[k];
+    if (x.t >= dayT && x.t < dayEnd && x.l <= S) { t1 = k; break; }
+  }
+  if (t1 < 0) return null;
+  const low1 = mtf[t1].l;
+  const shs = swingHighs(ltf, M.LD);
+
+  // Lowest confirmed swing high above R at the time of the break, and the first close above it after fromT.
+  const chk = (R, breakCloseT, fromT) => {
+    let best = null;
+    for (const s of shs) if (s.h > R && s.confT <= breakCloseT && (best === null || s.h < best.h)) best = s;
+    if (best === null) return { SH: null, done: true, t: null };
+    const from = Math.max(fromT, best.confT);
+    for (const k of ltf) if (k.t >= from && k.c > best.h) return { SH: best.h, done: true, t: k.t + M.LD };
+    return { SH: best.h, done: false, t: null };
+  };
+  const track = (R, kb, fromIdx) => {
+    if (kb >= 0) {
+      const bc = mtf[kb].t + M.MD, c = chk(R, bc, mtf[fromIdx].t);
+      return { R, mtfBroken: true, mtfT: mtf[kb].t, SH: c.SH, ltfDone: c.done, ltfT: c.t, done: c.done, doneT: Math.max(bc, c.t || 0) };
+    }
+    const c = chk(R, Infinity, mtf[fromIdx].t);
+    return { R, mtfBroken: false, mtfT: null, SH: c.SH, ltfDone: c.done, ltfT: c.t, done: false, doneT: null };
+  };
+
+  // Original resistance: lowest valid one above the support that was complete before the touch.
+  let R = null;
+  for (let j = 0; j + 1 < t1; j++) {
+    if (!(bull(mtf[j]) && bear(mtf[j + 1]))) continue;
+    const r = mtf[j].c;
+    if (!(r > S)) continue;
+    let ok = true;
+    for (let m = j + 1; m < t1; m++) { if (mtf[m].c > r) { ok = false; break; } }
+    if (ok && (R === null || r < R)) R = r;
+  }
+  let orig = null;
+  if (R !== null) {
+    let kb = -1;
+    for (let k = t1; k <= last; k++) { if (mtf[k].c > R) { kb = k; break; } }
+    orig = track(R, kb, t1);
+  }
+
+  // Exception: a later candle goes below the first touch's low and closes above the support.
+  let ex = null;
+  for (let s = t1 + 1; s <= last && !ex; s++) {
+    if (!(mtf[s].l < low1 && mtf[s].c > S)) continue;
+    let R2 = null;
+    for (let j = Math.max(0, t1 - 1); j + 1 < s; j++) {
+      if (!(bull(mtf[j]) && bear(mtf[j + 1]))) continue;
+      const r = mtf[j].c;
+      if (!(r > S)) continue;
+      let ok = true;
+      for (let m = j + 1; m < s; m++) { if (mtf[m].c > r) { ok = false; break; } }
+      if (ok && (R2 === null || r > R2)) R2 = r;
+    }
+    if (R2 === null) continue;
+    let kb2 = -1;
+    for (let k = s; k <= last; k++) { if (mtf[k].c > R2) { kb2 = k; break; } }
+    ex = Object.assign(track(R2, kb2, s), { s });
+  }
+
+  const mk = extra => Object.assign(pick(rej), { touchT: mtf[t1].t, low1 }, extra);
+  const when = t => (t <= dayEnd ? 'reset' : 'after');
+  if (orig && orig.done && (!ex || orig.doneT <= mtf[ex.s].t + M.MD))
+    return mk(Object.assign({ route: 'original', status: 'triggered', when: when(orig.doneT) }, orig));
+  if (ex) {
+    const o = Object.assign({}, ex); delete o.s;
+    return mk(Object.assign({ route: 'exception', sweepT: mtf[ex.s].t, sweepLow: mtf[ex.s].l,
+      status: ex.done ? 'triggered' : 'watching', when: ex.done ? when(ex.doneT) : null }, o));
+  }
+  if (orig) return mk(Object.assign({ route: 'original', status: 'watching', when: null }, orig));
+  return null;
+}
+
+// Lowest valid resistance on the rejection timeframe above the support at the moment of the first touch.
+// `htf` ends with the rejection candle.
+function htfResistance(htf, mtf, S, dayT, touchT) {
+  const di = htf.length - 1;
+  let best = null;
+  for (let j = 0; j + 1 < di; j++) {
+    if (!(bull(htf[j]) && bear(htf[j + 1]))) continue;
+    const r = htf[j].c;
+    if (!(r > S)) continue;
+    let ok = true;
+    for (let m = j + 2; m < di; m++) { if (htf[m].h >= r) { ok = false; break; } }
+    if (ok) for (const k of mtf) { if (k.t >= dayT && k.t < touchT && k.h >= r) { ok = false; break; } }
+    if (ok && (best === null || r < best)) best = r;
+  }
+  return best;
+}
+
+// Has price reached that resistance at any point after the first touch, up to the latest closed candle?
+function htfTouched(mtf, s) {
+  if (s.dRes === null || s.dRes === undefined) return false;
+  return mtf.some(k => k.t > s.touchT && k.h >= s.dRes);
+}
+// ==== LOGIC END
+
+// ---------- App ----------
+const HOSTS = ['https://api.bytick.com', 'https://api.bybit.com'];
+let hostIdx = 0;
+const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 } };
+const CONC = 6, TIMEOUT = 15000;
+const COLS = ['snr', 'lhr', 'crt', 'both'];
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+
+let mode = 'D1', tab = 'snr', results = [], running = false, stopped = false, ctrl = null, wake = null, actx = null;
+let watch = [], recentTrig = [];
+let seen = new Set(store.get('rs2_seen', [])), seenAtStart = new Set(seen);
+let dismissed = new Set(store.get('rs2_dismissed', []));
+let scanned = { done: 0, total: 0, failed: 0, t0: 0 };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const wkey = s => mode + '|' + s.symbol + '|' + s.S + '|' + s.dayT;
+const keyOf = s => wkey(s) + '|' + s.touchT + '|' + s.status;
+const colOf = s => (s.lhr && s.crt ? 'both' : s.lhr ? 'lhr' : s.crt ? 'crt' : 'snr');
+
+async function getJSON(host, path, signal) {
+  const c = new AbortController();
+  const onAbort = () => c.abort();
+  signal.addEventListener('abort', onAbort);
+  const timer = setTimeout(() => c.abort(), TIMEOUT);
+  try {
+    const r = await fetch(host + path, { signal: c.signal });
+    if (r.status === 429) return { rate: true };
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(timer); signal.removeEventListener('abort', onAbort); }
+}
+async function api(path, signal) {
+  for (let n = 0; n < 5; n++) {
+    const used = hostIdx;
+    let j;
+    try { j = await getJSON(HOSTS[used], path, signal); }
+    catch (e) {
+      if (signal.aborted || n === 4) throw e;
+      if (hostIdx === used) hostIdx = (used + 1) % HOSTS.length;
+      await sleep(400 * (n + 1)); continue;
+    }
+    if (j.rate || j.retCode === 10006) { await sleep(1200 * (n + 1)); continue; }
+    if (j.retCode !== 0) throw new Error(j.retMsg || 'Bybit error');
+    return j;
+  }
+  throw new Error('Rate limited');
+}
+function parseK(list, ms, now) {
+  return list.map(r => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4] }))
+    .reverse().filter(k => k.t + ms <= now);
+}
+
+// ---------- Formatting ----------
+function fp(x) {
+  if (x === null || x === undefined || isNaN(x)) return '-';
+  if (x >= 100) return x.toFixed(2);
+  if (x >= 1) return x.toFixed(4);
+  if (x >= 0.0001) return x.toPrecision(4);
+  return x.toFixed(10).replace(/0+$/, '');
+}
+const tfmt = t => new Date(t).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+const dfmt = t => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+// ---------- Rendering ----------
+let queued = false;
+function scheduleRender() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; render(); }); }
+
+function statusChip(s, M) {
+  const n = M.names;
+  if (s.status === 'triggered') {
+    if (s.route === 'exception') return '<span class="chip go">Second-touch sweep, triggered</span>';
+    return `<span class="chip go">Triggered ${s.when === 'reset' ? 'before' : 'after'} the ${M.reset} reset</span>`;
+  }
+  if (s.route === 'exception' && !s.mtfBroken) return '<span class="chip watch">Swept first low, watching new resistance</span>';
+  if (s.mtfBroken && !s.ltfDone) return `<span class="chip watch">${n[1]} closed above, waiting for ${n[2]} swing high</span>`;
+  if (!s.mtfBroken && s.SH !== null && s.ltfDone) return `<span class="chip watch">${n[2]} closed above swing high, waiting for ${n[1]} break</span>`;
+  return '<span class="chip watch">Resistance not broken</span>';
+}
+
+function card(s) {
+  const M = MODES[mode], n = M.names;
+  const base = s.symbol.slice(0, -4);
+  const isNew = !seenAtStart.has(keyOf(s));
+  const chips = [statusChip(s, M)];
+  if (s.kind === 'flipped') chips.push('<span class="chip idle">Flipped resistance</span>');
+  if (s.reclaimed) chips.push('<span class="chip idle">Reclaimed once</span>');
+  if (s.status === 'watching') chips.push(`<button class="rm" type="button" data-key="${wkey(s)}">Remove</button>`);
+
+  const rows = [];
+  rows.push(`<div><dt>Support</dt><dd>${fp(s.S)}<small>${s.kind === 'flipped' ? 'flipped, resistance of ' : 'from '}${dfmt(s.srcT)}</small></dd></div>`);
+  rows.push(`<div><dt>First touch</dt><dd>${fp(s.low1)}<small>${tfmt(s.touchT)}</small></dd></div>`);
+  rows.push(`<div><dt>${s.route === 'exception' ? 'New resistance' : 'Resistance'}</dt><dd>${fp(s.R)}</dd></div>`);
+  if (s.mtfBroken) rows.push(`<div><dt>${n[1]} close above</dt><dd>${tfmt(s.mtfT)}</dd></div>`);
+  else rows.push(`<div><dt>Needs ${n[1]} close above</dt><dd>${((s.R / s.price - 1) * 100).toFixed(2)}%<small>from last price</small></dd></div>`);
+  if (s.SH !== null && s.SH !== undefined)
+    rows.push(`<div><dt>${n[2]} swing high</dt><dd>${fp(s.SH)}<small>${s.ltfDone ? 'closed above ' + tfmt(s.ltfT - M.LD) : 'close above needed'}</small></dd></div>`);
+  if (s.route === 'exception') rows.push(`<div><dt>Sweep</dt><dd>${fp(s.sweepLow)}<small>${tfmt(s.sweepT)}</small></dd></div>`);
+  if (s.crt) rows.push(`<div><dt>CRT low swept</dt><dd>${fp(s.crtLow)}<small>${dfmt(s.crtT)}</small></dd></div>`);
+  if (s.lhr) rows.push(`<div><dt>Support age</dt><dd>${Math.floor(s.age / DAY)} days</dd></div>`);
+  if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} resistance</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
+
+  return `<article class="card">
+    <div class="head">
+      <a class="sym" href="https://www.bybit.com/en/trade/spot/${base}/USDT" target="_blank" rel="noopener">${base}<span>/USDT</span></a>
+      ${isNew ? '<span class="new">NEW</span>' : ''}
+      <span class="px">${fp(s.price)}</span>
+    </div>
+    <div class="chips">${chips.join('')}</div>
+    <dl class="grid">${rows.join('')}</dl>
+  </article>`;
+}
+
+function render() {
+  const by = { snr: [], lhr: [], crt: [], both: [] };
+  results.forEach(s => by[colOf(s)].push(s));
+  COLS.forEach(k => {
+    by[k].sort((a, b) => a.status === b.status
+      ? (a.status === 'triggered' ? b.doneT - a.doneT : (a.R / a.price) - (b.R / b.price))
+      : (a.status === 'triggered' ? -1 : 1));
+    $('n-' + k).textContent = by[k].length;
+    $('tab-' + k).setAttribute('aria-selected', String(k === tab));
+  });
+  const items = by[tab];
+  if (items.length) $('list').innerHTML = items.map(card).join('');
+  else {
+    const msg = running ? 'Nothing here yet. Still scanning.' : (scanned.total ? 'Nothing in this column.' : 'Press Scan to start.');
+    $('list').innerHTML = `<div class="empty">${msg}</div>`;
+  }
+  const bits = [];
+  if (watch.length) bits.push(watch.length + ' saved to watch');
+  if (seen.size) bits.push(seen.size + ' alerts seen');
+  $('seenline').textContent = bits.join(' · ');
+  const hints = {
+    D1: 'Rejection on D1, resistance break on H4, swing-high close on H1.',
+    W1: 'Rejection on W1, resistance break on D1, swing-high close on H4.'
+  };
+  $('modeHint').textContent = hints[mode];
+  ['D1', 'W1'].forEach(m => { $('m-' + m).setAttribute('aria-pressed', String(m === mode)); $('m-' + m).disabled = running; });
+}
+
+function setStatus(text, meta) {
+  $('state').textContent = text;
+  $('meta').textContent = meta || '';
+  const pct = scanned.total ? Math.round(scanned.done / scanned.total * 100) : 0;
+  $('fill').style.width = pct + '%';
+}
+function showErr(msg) { const e = $('err'); e.hidden = !msg; e.textContent = msg || ''; }
+
+// ---------- Alerts ----------
+function arm() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.resume) actx.resume(); } catch (e) {} }
+function alertNew() {
+  if (!$('sound').checked) return;
+  try {
+    if (actx) {
+      [0, 0.18].forEach(d => {
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = 'sine'; o.frequency.value = d ? 1175 : 880;
+        g.gain.setValueAtTime(0.0001, actx.currentTime + d);
+        g.gain.exponentialRampToValueAtTime(0.25, actx.currentTime + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + d + 0.16);
+        o.connect(g); g.connect(actx.destination); o.start(actx.currentTime + d); o.stop(actx.currentTime + d + 0.18);
+      });
+    }
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
+}
+
+// ---------- Mode and settings ----------
+function loadMode() {
+  const M = MODES[mode], now = Date.now();
+  watch = store.get('rs2_watch_' + mode, []);
+  recentTrig = store.get('rs2_trig_' + mode, []).filter(s => now - s.doneT < M.keep);
+  results = recentTrig.slice();
+}
+function saveCfg() {
+  store.set('rs2_cfg', { mode, maxPrice: $('maxPrice').value, minVol: $('minVol').value, sound: $('sound').checked });
+}
+
+// ---------- Scan ----------
+async function scan() {
+  const M = MODES[mode], md = mode, LBm = LB[md];
+  running = true; stopped = false; showErr('');
+  ctrl = new AbortController();
+  seenAtStart = new Set(seen);
+  scanned = { done: 0, total: 0, failed: 0, t0: Date.now() };
+  let now = Date.now();
+  $('go').textContent = 'Stop'; $('go').className = 'stop';
+  arm();
+  try {
+    if (navigator.wakeLock) navigator.wakeLock.request('screen')
+      .then(w => { wake = w; if (!running) { try { w.release(); } catch (e) {} } }).catch(() => {});
+  } catch (e) {}
+  results = [];
+  setStatus('Loading pairs', ''); render();
+
+  try {
+    const mp = parseFloat($('maxPrice').value);
+    const maxPrice = mp > 0 ? mp : Infinity;
+    const minVol = parseFloat($('minVol').value) || 0;
+    saveCfg();
+
+    const tk = await api('/v5/market/tickers?category=spot', ctrl.signal);
+    now = +tk.time || Date.now();
+    const prevT = prevCandleT(now, M.HD);
+    $('dayline').textContent = `${M.names[0]} candle opened ${dfmt(prevT)} (UTC), closed ${tfmt(prevT + M.HD)} your time.`;
+
+    const prices = {};
+    tk.result.list.forEach(x => { prices[x.symbol] = parseFloat(x.lastPrice); });
+    const list = tk.result.list
+      .filter(x => x.symbol.endsWith('USDT'))
+      .map(x => ({ symbol: x.symbol, price: parseFloat(x.lastPrice), vol: parseFloat(x.turnover24h) || 0 }))
+      .filter(x => x.price > 0 && x.price < maxPrice && x.vol >= minVol);
+
+    // Saved setups from earlier candles. Setups from the latest candle are found again by the main pass.
+    const pool = new Map();
+    watch.concat(recentTrig.filter(s => now - s.doneT < M.keep)).forEach(w => pool.set(wkey(w), w));
+    const saved = [];
+    pool.forEach((w, k) => { if (w.dayT !== prevT && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
+    scanned.total = list.length + saved.length;
+    setStatus('Scanning', `0 / ${scanned.total}`);
+
+    const getK = async (sym, i, dur, n) => {
+      const j = await api(`/v5/market/kline?category=spot&symbol=${sym}&interval=${M.iv[i]}&limit=${n}`, ctrl.signal);
+      return parseK(j.result.list, dur, now);
+    };
+    const addResult = s => {
+      const k = wkey(s);
+      results = results.filter(x => !(wkey(x) === k && x.touchT === s.touchT));
+      results.push(s);
+      const sk = keyOf(s);
+      if (!seenAtStart.has(sk)) {
+        if (s.status === 'triggered') alertNew();
+        seen.add(sk);
+      }
+    };
+
+    let idx = 0;
+    const worker = async () => {
+      while (!stopped && idx < list.length) {
+        const p = list[idx++];
+        try {
+          const htf = await getK(p.symbol, 0, M.HD, LBm.htf);
+          if (htf.length && htf[htf.length - 1].t === prevT) {
+            const rejs = findRejections(htf, M);
+            if (rejs.length && !stopped) {
+              const [mtf, ltf] = await Promise.all([getK(p.symbol, 1, M.MD, LBm.mtf), getK(p.symbol, 2, M.LD, LBm.ltf)]);
+              tagRejections(rejs, htf, M);
+              rejs.forEach(r => {
+                const s = evaluate(r, mtf, ltf, M);
+                if (!s) return;
+                s.symbol = p.symbol; s.price = p.price; s.vol = p.vol;
+                if (dismissed.has(wkey(s))) return;
+                s.dRes = htfResistance(htf, mtf, s.S, s.dayT, s.touchT);
+                if (htfTouched(mtf, s)) return;
+                addResult(s);
+              });
+              scheduleRender();
+            }
+          }
+        } catch (e) {
+          if (stopped || ctrl.signal.aborted) return;
+          scanned.failed++;
+        }
+        scanned.done++;
+        setStatus('Scanning', `${scanned.done} / ${scanned.total}`);
+      }
+    };
+    await Promise.all(Array.from({ length: CONC }, worker));
+
+    // Recheck saved setups against the latest candles.
+    const processed = new Set();
+    let j2 = 0;
+    const recheck = async () => {
+      while (!stopped && j2 < saved.length) {
+        const w = saved[j2++], k = wkey(w);
+        try {
+          const [mtf, ltf] = await Promise.all([getK(w.symbol, 1, M.MD, LBm.mtf), getK(w.symbol, 2, M.LD, LBm.ltf)]);
+          processed.add(k);
+          const s = evaluate(w, mtf, ltf, M);
+          if (s) {
+            s.symbol = w.symbol; s.price = prices[w.symbol]; s.vol = w.vol;
+            if (!htfTouched(mtf, s)) { addResult(s); scheduleRender(); }
+          }
+        } catch (e) {
+          if (stopped || ctrl.signal.aborted) return;
+          scanned.failed++;
+        }
+        scanned.done++;
+        setStatus('Rechecking saved', `${scanned.done} / ${scanned.total}`);
+      }
+    };
+    await Promise.all(Array.from({ length: CONC }, recheck));
+
+    // Rebuild the saved lists. Items that could not be rechecked (stopped, failed) are kept as they were.
+    const keep = new Map();
+    pool.forEach((w, k) => {
+      if (dismissed.has(k) || !(prices[w.symbol] > 0)) return;
+      const handled = processed.has(k) || (!stopped && w.dayT === prevT);
+      if (!handled) keep.set(k, w);
+    });
+    results.forEach(s => keep.set(wkey(s), s));
+    if (md === mode) {
+      watch = Array.from(keep.values()).filter(s => s.status === 'watching');
+      recentTrig = Array.from(keep.values()).filter(s => s.status === 'triggered' && now - s.doneT < M.keep);
+      store.set('rs2_watch_' + md, watch); store.set('rs2_trig_' + md, recentTrig);
+    }
+    store.set('rs2_seen', Array.from(seen));
+
+    const secs = Math.round((Date.now() - scanned.t0) / 1000);
+    const f = scanned.failed ? ` · ${scanned.failed} failed` : '';
+    const body = `${scanned.done} / ${scanned.total} pairs${f}`;
+    if (stopped) setStatus('Stopped', body);
+    else setStatus('Done', `${body} · ${secs}s`);
+  } catch (e) {
+    if (stopped) setStatus('Stopped', `${scanned.done} / ${scanned.total}`);
+    else {
+      setStatus('Scan failed', '');
+      showErr(`Could not reach Bybit (${e && e.message ? e.message : 'no reply'}). Both Bybit addresses failed. Check your connection, or try another network or a VPN.`);
+    }
+  } finally {
+    running = false;
+    try { if (wake) { wake.release(); wake = null; } } catch (e) {}
+    $('go').textContent = 'Scan'; $('go').className = '';
+    render();
+  }
+}
+
+function stop() { stopped = true; try { ctrl.abort(); } catch (e) {} }
+
+$('go').addEventListener('click', () => { running ? stop() : scan(); });
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+['D1', 'W1'].forEach(m => $('m-' + m).addEventListener('click', () => {
+  if (running || m === mode) return;
+  mode = m; saveCfg(); loadMode(); scanned.total = 0; setStatus('Ready', ''); render();
+}));
+$('clearSeen').addEventListener('click', () => { seen = new Set(); seenAtStart = new Set(); store.set('rs2_seen', []); render(); });
+$('list').addEventListener('click', e => {
+  const b = e.target.closest ? e.target.closest('.rm') : null;
+  if (!b) return;
+  const k = b.dataset.key;
+  dismissed.add(k); store.set('rs2_dismissed', Array.from(dismissed));
+  watch = watch.filter(w => wkey(w) !== k); store.set('rs2_watch_' + mode, watch);
+  results = results.filter(s => !(s.status === 'watching' && wkey(s) === k));
+  render();
+});
+
+const cfg = store.get('rs2_cfg', null);
+if (cfg) {
+  if (cfg.mode === 'W1') mode = 'W1';
+  $('maxPrice').value = cfg.maxPrice; $('minVol').value = cfg.minVol; $('sound').checked = cfg.sound !== false;
+}
+loadMode();
+render();
+</script>
+</body>
+</html>
