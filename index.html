@@ -171,7 +171,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
     <ol>
       <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. Only the last closed candle on the rejection timeframe is checked for a rejection.</li>
       <li>Support: a bearish candle followed by a bullish one, at the bearish candle's close. Touches count from the candle after the bullish one. A resistance (bullish candle then bearish, at the bullish close) that a candle has closed above also becomes a support, with touches counted after that closing candle.</li>
-      <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it.</li>
+      <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
       <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
       <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the lowest confirmed swing high above that resistance, in either order. A swing high is a candle whose high is above both neighbours. With no swing high above the resistance, the break alone triggers.</li>
@@ -204,13 +204,13 @@ function prevCandleT(now, HD) {
 
 // Walks the candles from `start` up to (not including) the last one and says whether the last one is a valid rejection.
 // States: fresh -> (close below) broken -> (later close above) reclaimed. A second close below ends it.
-function walkSupport(htf, S, start) {
+function walkSupport(htf, S, start, allowReclaim = true) {
   const L = htf.length - 1;
   let state = 'fresh', brokeT = null, reclaimT = null;
   for (let k = start; k < L; k++) {
     const c = htf[k];
     if (state === 'fresh') {
-      if (c.l <= S) { if (c.c > S) return null; state = 'broken'; brokeT = c.t; }
+      if (c.l <= S) { if (c.c > S || !allowReclaim) return null; state = 'broken'; brokeT = c.t; }
     } else if (state === 'broken') {
       if (c.c > S) { state = 'reclaimed'; reclaimT = c.t; }
     } else if (c.l <= S) return null;
@@ -240,7 +240,7 @@ function findRejections(htf, M) {
     let b = -1;
     for (let k = j + 2; k < L; k++) { if (htf[k].c > R) { b = k; break; } }
     if (b < 0) continue;
-    const w = walkSupport(htf, R, b + 1);
+    const w = walkSupport(htf, R, b + 1, false);   // a flipped resistance has no reclaim: one close below ends it
     if (!w || seenS.has(R)) continue;
     seenS.add(R);
     out.push({ S: R, kind: 'flipped', reclaimed: w.reclaimed, brokeT: w.brokeT, reclaimT: w.reclaimT, flipT: htf[b].t, srcT: htf[j].t, createdT: htf[b].t + M.HD, dayT: D.t });
