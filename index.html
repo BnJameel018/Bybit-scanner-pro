@@ -89,6 +89,7 @@ h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.
 .sym{font:600 18px var(--mono); color:var(--ink); text-decoration:none}
 .sym span{color:var(--mute); font-weight:400}
 .px{margin-left:auto; font:500 14px var(--mono); color:var(--mute)}
+.bb{font:500 12px var(--sans); color:var(--mute); text-decoration:underline}
 .new{font:700 10.5px var(--sans); letter-spacing:.08em; padding:2px 7px; border-radius:99px; background:var(--accent); color:var(--on-accent)}
 .chips{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
 .chip{font:600 12px var(--sans); padding:3px 9px; border-radius:99px}
@@ -470,6 +471,22 @@ function statusChip(s, M) {
   return '<span class="chip watch">Resistance not broken</span>';
 }
 
+// Link to the chart app. Same GitHub account, so the relative path works when the repo is named chart-app.
+const CHART_URL = '../chart-app/';
+function chartLink(s, M) {
+  const n = M.names, iv = M.iv, m = [];
+  const seg = (c, t1, t2, p, l, tfs) => { if (t1 && p !== null && p !== undefined && isFinite(p)) m.push({ k: 'seg', c, t1, t2: t2 || 0, p, l, tfs }); };
+  // Support: from the rejected support to the candle that rejected it. Shown on the support timeframe and the two below.
+  seg('sup', s.srcT, s.touchT, s.S, s.kind === 'flipped' ? 'Support (flipped)' : 'Support', [iv[0], iv[1], iv[2]]);
+  // Resistance: from the resistance to the candle that closed above it. Shown on its timeframe and the next one below.
+  seg('res', s.resT, s.mtfBroken ? s.mtfT : 0, s.R, s.route === 'exception' ? 'New resistance' : 'Resistance', [iv[1], iv[2]]);
+  // Swing high: from the swing high to the candle that closed above it. Shown on its own timeframe only.
+  if (s.SH !== null && s.SH !== undefined) seg('sh', s.shT, s.ltfDone && s.ltfT ? s.ltfT - M.LD : 0, s.SH, n[2] + ' swing high', [iv[2]]);
+  const hint = `Support on ${n[0]}/${n[1]}/${n[2]} · Resistance on ${n[1]}/${n[2]} · Swing high on ${n[2]}`;
+  const payload = { sym: s.symbol, tf: iv[1], title: (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
+  return CHART_URL + '?sig=' + encodeURIComponent(JSON.stringify(payload));
+}
+
 function card(s) {
   const M = MODES[mode], n = M.names;
   const base = s.symbol.slice(0, -4);
@@ -512,7 +529,8 @@ function card(s) {
 
   return `<article class="card">
     <div class="head">
-      <a class="sym" href="https://www.bybit.com/en/trade/spot/${base}/USDT" target="_blank" rel="noopener">${base}<span>/USDT</span></a>
+      <a class="sym" href="${chartLink(s, M)}" target="_blank" rel="noopener">${base}<span>/USDT</span></a>
+      <a class="bb" href="https://www.bybit.com/en/trade/spot/${base}/USDT" target="_blank" rel="noopener">Bybit</a>
       ${isNew ? '<span class="new">NEW</span>' : ''}
       <span class="px">${fp(s.price)}</span>
     </div>
