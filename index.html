@@ -89,6 +89,7 @@ h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.
 .sym{font:600 18px var(--mono); color:var(--ink); text-decoration:none}
 .sym span{color:var(--mute); font-weight:400}
 .px{margin-left:auto; font:500 14px var(--mono); color:var(--mute)}
+.chartbtn{font:700 12px var(--sans); color:var(--on-accent); background:var(--accent); text-decoration:none; padding:3px 10px; border-radius:99px}
 .bb{font:500 12px var(--sans); color:var(--mute); text-decoration:underline}
 .new{font:700 10.5px var(--sans); letter-spacing:.08em; padding:2px 7px; border-radius:99px; background:var(--accent); color:var(--on-accent)}
 .chips{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
@@ -472,7 +473,7 @@ function statusChip(s, M) {
 }
 
 // Link to the chart app. Same GitHub account, so the relative path works when the repo is named chart-app.
-const CHART_URL = '../chart-app/';
+const CHART_URL = '../Chart-app/';
 function chartLink(s, M) {
   const n = M.names, iv = M.iv, m = [];
   const seg = (c, t1, t2, p, l, tfs) => { if (t1 && p !== null && p !== undefined && isFinite(p)) m.push({ k: 'seg', c, t1, t2: t2 || 0, p, l, tfs }); };
@@ -530,6 +531,7 @@ function card(s) {
   return `<article class="card">
     <div class="head">
       <a class="sym" href="${chartLink(s, M)}" target="_blank" rel="noopener">${base}<span>/USDT</span></a>
+      <a class="chartbtn" href="${chartLink(s, M)}" target="_blank" rel="noopener">Open chart ↗</a>
       <a class="bb" href="https://www.bybit.com/en/trade/spot/${base}/USDT" target="_blank" rel="noopener">Bybit</a>
       ${isNew ? '<span class="new">NEW</span>' : ''}
       <span class="px">${fp(s.price)}</span>
