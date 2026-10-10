@@ -302,7 +302,7 @@ function tagRejections(rejs, htf, M) {
 // Bearish move into the support, on the swing-high timeframe. Returns the high of the most recent valid correction
 // (the top where the last down impulse started). A bounce counts only if it trades above the high of the last impulse
 // candle (the lowest-low candle), and it is complete only once price makes a new lower low. Swings inside it are ignored.
-// With no completed correction (one straight fall) the level is the high of the candle before the fall.
+// With no completed correction (one straight fall) the level is the high of the candle before the fall (the move's top).
 // ref = { from: ms, below: price, strict: bool }: the fall is read up to the first candle at/after `from` that trades to `below`.
 function correctionHigh(ltf, ref, LD) {
   let e = -1;
@@ -311,14 +311,16 @@ function correctionHigh(ltf, ref, LD) {
   }
   if (e < 0) { for (let i = 0; i < ltf.length && ltf[i].t < ref.from; i++) e = i; }
   if (e < 0) return null;
-  let m = 0, peak = -1, lvl = -1;
+  // tm = top of the bearish move being read. A candle that trades above it is a higher high: that move is over, so the
+  // read restarts from that candle. This keeps the level inside the move that actually falls into the support.
+  let tm = 0, m = 0, peak = -1, lvl = -1;
   for (let i = 1; i <= e; i++) {
     const c = ltf[i];
-    if (c.l < ltf[m].l) { if (peak >= 0) lvl = peak; peak = -1; m = i; }
+    if (c.h > ltf[tm].h) { tm = i; m = i; peak = -1; lvl = -1; }
+    else if (c.l < ltf[m].l) { if (peak >= 0) lvl = peak; peak = -1; m = i; }
     else if (c.h > ltf[m].h && (peak < 0 || c.h > ltf[peak].h)) peak = i;
   }
-  let idx = lvl >= 0 ? lvl : peak, kind = lvl >= 0 ? 'correction' : 'peak';
-  if (idx < 0) { idx = 0; for (let i = 1; i <= m; i++) if (ltf[i].h > ltf[idx].h) idx = i; kind = 'straight'; }
+  const idx = lvl >= 0 ? lvl : tm, kind = lvl >= 0 ? 'correction' : 'straight';
   return { h: ltf[idx].h, t: ltf[idx].t, afterT: ltf[e].t + LD, kind };
 }
 
