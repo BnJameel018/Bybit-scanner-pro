@@ -176,9 +176,9 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
       <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
-      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
+      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. If a candle trades above the swing high but closes below it, its high becomes the new level that has to be closed above, and this repeats. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
-      <li>A pair is dropped when, at scan time, price has reached the lowest valid resistance on the rejection timeframe since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
+      <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
       <li>Only triggered setups are listed. Incomplete ones are saved on this phone and rechecked on each scan, and appear once they trigger. The rejection candle may still be forming on the rejection timeframe; its price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support. Triggered setups stay listed for 3 days (14 days in W1 mode).</li>
     </ol>
@@ -338,11 +338,18 @@ function evaluate(rej, mtf, ltf, M) {
   }
   if (t1 < 0) return null;
   const low1 = mtf[t1].l;
-  // First LTF close above the correction high, after the candle that touched the support.
+  // Close above the swing high, after the candle that touched the support. A candle that trades above the level but
+  // closes at or below it does not count: its high becomes the new level, and so on, until a candle closes above the
+  // current level.
   const chk = lv => {
     if (!lv) return { SH: null, SHt: null, done: true, t: null };
-    for (const k of ltf) if (k.t >= lv.afterT && k.c > lv.h) return { SH: lv.h, SHt: lv.t, done: true, t: k.t + M.LD };
-    return { SH: lv.h, SHt: lv.t, done: false, t: null };
+    let lvl = lv.h, lt = lv.t;
+    for (const k of ltf) {
+      if (k.t < lv.afterT) continue;
+      if (k.c > lvl) return { SH: lvl, SHt: lt, done: true, t: k.t + M.LD };
+      if (k.h > lvl) { lvl = k.h; lt = k.t; }
+    }
+    return { SH: lvl, SHt: lt, done: false, t: null };
   };
   const track = (R, resT, kb, lv) => {
     const c = chk(lv);
@@ -403,18 +410,34 @@ function evaluate(rej, mtf, ltf, M) {
 }
 
 // Lowest valid resistance on the rejection timeframe above the support at the moment of the first touch.
-// `htf` ends with the rejection candle.
+// `htf` ends with the rejection candle. Three kinds count, each valid only while no candle has reached it since it
+// became resistance:
+//  - a normal resistance: a bullish then bearish candle, at the bullish close;
+//  - a flipped support: a support (bearish then bullish candle, at the bearish close) that a candle closed below;
+//  - a reclaimed resistance: a resistance that a candle closed above and a later candle closed back below.
 function htfResistanceInfo(htf, mtf, S, dayT, touchT) {
   const di = htf.length - 1;
   let best = null, bestT = null;
+  const consider = (r, t, from) => {
+    if (!(r > S)) return;
+    for (let m = from; m < di; m++) if (htf[m].h >= r) return;
+    for (const k of mtf) if (k.t >= dayT && k.t < touchT && k.h >= r) return;
+    if (best === null || r < best) { best = r; bestT = t; }
+  };
   for (let j = 0; j + 1 < di; j++) {
-    if (!(bull(htf[j]) && bear(htf[j + 1]))) continue;
-    const r = htf[j].c;
-    if (!(r > S)) continue;
-    let ok = true;
-    for (let m = j + 2; m < di; m++) { if (htf[m].h >= r) { ok = false; break; } }
-    if (ok) for (const k of mtf) { if (k.t >= dayT && k.t < touchT && k.h >= r) { ok = false; break; } }
-    if (ok && (best === null || r < best)) { best = r; bestT = htf[j].t; }
+    if (bull(htf[j]) && bear(htf[j + 1])) {
+      const r = htf[j].c;
+      consider(r, htf[j].t, j + 2);
+      // closed above, then back below: resistance again from the candle that closed back below
+      let b = -1, c = -1;
+      for (let k = j + 2; k < di; k++) { if (b < 0) { if (htf[k].c > r) b = k; } else if (htf[k].c < r) { c = k; break; } }
+      if (c >= 0) consider(r, htf[j].t, c + 1);
+    } else if (bear(htf[j]) && bull(htf[j + 1])) {
+      const r = htf[j].c;
+      let b = -1;
+      for (let k = j + 2; k < di; k++) { if (htf[k].c < r) { b = k; break; } }
+      if (b >= 0) consider(r, htf[j].t, b + 1);
+    }
   }
   return best === null ? null : { r: best, t: bestT };
 }
