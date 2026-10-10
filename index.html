@@ -171,16 +171,16 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
   <details class="rules">
     <summary>How the rules are read</summary>
     <ol>
-      <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. Only the last closed candle on the rejection timeframe is checked for a rejection.</li>
+      <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. The last closed candle on the rejection timeframe and the one still forming are checked for a rejection.</li>
       <li>Support: a bearish candle followed by a bullish one, at the bearish candle's close. Touches count from the candle after the bullish one. A resistance (bullish candle then bearish, at the bullish close) that a candle has closed above also becomes a support, with touches counted after that closing candle.</li>
       <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
       <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
-      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the lowest confirmed swing high above that resistance, in either order. A swing high is a candle whose high is above both neighbours. With no swing high above the resistance, the break alone triggers.</li>
+      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
-      <li>A pair is dropped once price has reached the lowest valid resistance on the rejection timeframe after the first touch.</li>
-      <li>LHR: the support is at least a week old (4 weeks in W1 mode), counted from the close of its bullish candle to the open of the rejection candle. Flipped resistances are not checked for this. CRT: the rejection candle trades below the low of an earlier candle that nobody had traded below since, and closes back above that low.</li>
-      <li>Setups still waiting for a trigger are saved on this phone and rechecked on each scan. Triggered setups stay listed for 3 days (14 days in W1 mode).</li>
+      <li>A pair is dropped when, at scan time, price has reached the lowest valid resistance on the rejection timeframe since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
+      <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
+      <li>Only triggered setups are listed. Incomplete ones are saved on this phone and rechecked on each scan, and appear once they trigger. The rejection candle may still be forming on the rejection timeframe; its price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support. Triggered setups stay listed for 3 days (14 days in W1 mode).</li>
     </ol>
   </details>
 
@@ -193,8 +193,8 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
 // ==== LOGIC START
 const DAY = 864e5, WEEK = 7 * DAY, H1MS = 36e5, H4MS = 144e5;
 const MODES = {
-  D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], lhr: WEEK, keep: 3 * DAY, reset: 'daily' },
-  W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], lhr: 4 * WEEK, keep: 14 * DAY, reset: 'weekly' }
+  D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], keep: 3 * DAY, reset: 'daily' },
+  W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], keep: 14 * DAY, reset: 'weekly' }
 };
 const bull = k => k.c > k.o, bear = k => k.c < k.o;
 
@@ -250,39 +250,79 @@ function findRejections(htf, M) {
   return out;
 }
 
-// CRT: the last candle trades below an earlier candle's low that nobody traded below since, then closes back above it.
+// CRT: the last candle (the rejection candle) sweeps below the low of an earlier candle and closes back inside that
+// candle's range. That earlier candle must be untouched since it formed (no later candle traded below its low or above
+// its high), and the rejection candle itself must stay under its high. The nearest such candle is used.
 function crtInfo(htf) {
   const L = htf.length - 1;
   if (L < 1) return null;
   const D = htf[L];
-  let minLow = Infinity;
+  let minLow = Infinity, maxHigh = -Infinity;
   for (let x = L - 1; x >= 0; x--) {
     const X = htf[x];
-    if (minLow >= X.l && D.l < X.l && D.c > X.l) return { low: X.l, t: X.t };
+    if (minLow >= X.l && maxHigh <= X.h && D.l < X.l && D.h <= X.h && D.c > X.l) return { low: X.l, t: X.t };
     if (X.l < minLow) minLow = X.l;
+    if (X.h > maxHigh) maxHigh = X.h;
   }
   return null;
 }
 
-// Adds age, LHR and CRT tags. LHR never applies to a flipped resistance.
+// Left hand: the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe:
+// from the support's bearish candle to the first touch, the highest high must come after that candle. A peak after it
+// means price rallied away and fell back (a different move); a peak inside it means the same fall was still running.
+// Flipped resistances are never tagged: they are always left hands.
+function leftHand(ltf, s, M) {
+  if (s.kind !== 'support') return false;
+  const ref = correctionHigh(ltf, { from: s.touchT, below: s.S, strict: false }, M.LD);
+  if (!ref) return false;
+  const endT = ref.afterT - M.LD;
+  let pk = -1, first = -1;
+  for (let i = 0; i < ltf.length; i++) {
+    const k = ltf[i];
+    if (k.t < s.srcT || k.t > endT) continue;
+    if (first < 0) first = i;
+    if (pk < 0 || k.h > ltf[pk].h) pk = i;
+  }
+  if (pk < 0) return false;
+  if (pk === first && ltf[first].t > s.srcT) return false;   // the data starts after the support: cannot tell
+  return ltf[pk].t >= s.srcT + M.HD;
+}
+
+// Adds age and CRT tags. LHR is set later, once the swing-high timeframe candles are loaded.
 function tagRejections(rejs, htf, M) {
   const D = htf[htf.length - 1], crt = crtInfo(htf);
   rejs.forEach(r => {
     r.age = D.t - r.createdT;
-    r.lhr = r.kind === 'support' && r.age >= M.lhr;
+    r.lhr = false;
     r.crt = !!crt; r.crtLow = crt ? crt.low : null; r.crtT = crt ? crt.t : null;
   });
   return rejs;
 }
 
-function swingHighs(ltf, LD) {
-  const out = [];
-  for (let i = 1; i + 1 < ltf.length; i++)
-    if (ltf[i].h > ltf[i - 1].h && ltf[i].h > ltf[i + 1].h) out.push({ h: ltf[i].h, t: ltf[i].t, confT: ltf[i + 1].t + LD });
-  return out;
+// Bearish move into the support, on the swing-high timeframe. Returns the high of the most recent valid correction
+// (the top where the last down impulse started). A bounce counts only if it trades above the high of the last impulse
+// candle (the lowest-low candle), and it is complete only once price makes a new lower low. Swings inside it are ignored.
+// With no completed correction (one straight fall) the level is the high of the candle before the fall.
+// ref = { from: ms, below: price, strict: bool }: the fall is read up to the first candle at/after `from` that trades to `below`.
+function correctionHigh(ltf, ref, LD) {
+  let e = -1;
+  for (let i = 0; i < ltf.length; i++) {
+    if (ltf[i].t >= ref.from && (ref.strict ? ltf[i].l < ref.below : ltf[i].l <= ref.below)) { e = i; break; }
+  }
+  if (e < 0) { for (let i = 0; i < ltf.length && ltf[i].t < ref.from; i++) e = i; }
+  if (e < 0) return null;
+  let m = 0, peak = -1, lvl = -1;
+  for (let i = 1; i <= e; i++) {
+    const c = ltf[i];
+    if (c.l < ltf[m].l) { if (peak >= 0) lvl = peak; peak = -1; m = i; }
+    else if (c.h > ltf[m].h && (peak < 0 || c.h > ltf[peak].h)) peak = i;
+  }
+  let idx = lvl >= 0 ? lvl : peak, kind = lvl >= 0 ? 'correction' : 'peak';
+  if (idx < 0) { idx = 0; for (let i = 1; i <= m; i++) if (ltf[i].h > ltf[idx].h) idx = i; kind = 'straight'; }
+  return { h: ltf[idx].h, t: ltf[idx].t, afterT: ltf[e].t + LD, kind };
 }
 
-const RK = ['S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
+const RK = ['forming', 'S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
 const pick = r => { const o = {}; RK.forEach(k => { o[k] = r[k]; }); return o; };
 
 // Break-timeframe candles (mtf) and swing-high-timeframe candles (ltf), oldest first, closed only.
@@ -296,23 +336,18 @@ function evaluate(rej, mtf, ltf, M) {
   }
   if (t1 < 0) return null;
   const low1 = mtf[t1].l;
-  const shs = swingHighs(ltf, M.LD);
-
-  // Lowest confirmed swing high above R at the time of the break, and the first close above it after fromT.
-  const chk = (R, breakCloseT, fromT) => {
-    let best = null;
-    for (const s of shs) if (s.h > R && s.confT <= breakCloseT && (best === null || s.h < best.h)) best = s;
-    if (best === null) return { SH: null, SHt: null, done: true, t: null };
-    const from = Math.max(fromT, best.confT);
-    for (const k of ltf) if (k.t >= from && k.c > best.h) return { SH: best.h, SHt: best.t, done: true, t: k.t + M.LD };
-    return { SH: best.h, SHt: best.t, done: false, t: null };
+  // First LTF close above the correction high, after the candle that touched the support.
+  const chk = lv => {
+    if (!lv) return { SH: null, SHt: null, done: true, t: null };
+    for (const k of ltf) if (k.t >= lv.afterT && k.c > lv.h) return { SH: lv.h, SHt: lv.t, done: true, t: k.t + M.LD };
+    return { SH: lv.h, SHt: lv.t, done: false, t: null };
   };
-  const track = (R, resT, kb, fromIdx) => {
+  const track = (R, resT, kb, lv) => {
+    const c = chk(lv);
     if (kb >= 0) {
-      const bc = mtf[kb].t + M.MD, c = chk(R, bc, mtf[fromIdx].t);
+      const bc = mtf[kb].t + M.MD;
       return { R, resT, mtfBroken: true, mtfT: mtf[kb].t, SH: c.SH, shT: c.SHt, ltfDone: c.done, ltfT: c.t, done: c.done, doneT: Math.max(bc, c.t || 0) };
     }
-    const c = chk(R, Infinity, mtf[fromIdx].t);
     return { R, resT, mtfBroken: false, mtfT: null, SH: c.SH, shT: c.SHt, ltfDone: c.done, ltfT: c.t, done: false, doneT: null };
   };
 
@@ -330,7 +365,7 @@ function evaluate(rej, mtf, ltf, M) {
   if (R !== null) {
     let kb = -1;
     for (let k = t1; k <= last; k++) { if (mtf[k].c > R) { kb = k; break; } }
-    orig = track(R, Rt, kb, t1);
+    orig = track(R, Rt, kb, correctionHigh(ltf, { from: mtf[t1].t, below: S, strict: false }, M.LD));
   }
 
   // Exception: a later candle goes below the first touch's low and closes above the support.
@@ -349,7 +384,7 @@ function evaluate(rej, mtf, ltf, M) {
     if (R2 === null) continue;
     let kb2 = -1;
     for (let k = s; k <= last; k++) { if (mtf[k].c > R2) { kb2 = k; break; } }
-    ex = Object.assign(track(R2, R2t, kb2, s), { s });
+    ex = Object.assign(track(R2, R2t, kb2, correctionHigh(ltf, { from: mtf[s].t, below: low1, strict: true }, M.LD)), { s });
   }
 
   const mk = extra => Object.assign(pick(rej), { touchT: mtf[t1].t, low1 }, extra);
@@ -382,10 +417,13 @@ function htfResistance(htf, mtf, S, dayT, touchT) {
   return best;
 }
 
-// Has price reached that resistance at any point after the first touch, up to the latest closed candle?
-function htfTouched(mtf, s) {
+// Dropped when price has reached that resistance since the first touch (the still-forming candle counts, `form`)
+// and no closed candle on the break timeframe has closed above it. A close above means it was broken, not just touched.
+function htfTouched(mtf, s, form) {
   if (s.dRes === null || s.dRes === undefined) return false;
-  return mtf.some(k => k.t > s.touchT && k.h >= s.dRes);
+  const all = form ? mtf.concat([form]) : mtf;
+  if (!all.some(k => k.t >= s.touchT && k.h >= s.dRes)) return false;
+  return !mtf.some(k => k.t >= s.touchT && k.c > s.dRes);
 }
 // ==== LOGIC END
 
@@ -440,9 +478,9 @@ async function api(path, signal) {
   }
   throw new Error('Rate limited');
 }
-function parseK(list, ms, now) {
+function parseK(list, ms, now, keepForming) {
   return list.map(r => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4] }))
-    .reverse().filter(k => k.t + ms <= now);
+    .reverse().filter(k => keepForming ? k.t <= now : k.t + ms <= now);
 }
 
 // ---------- Formatting ----------
@@ -494,39 +532,14 @@ function card(s) {
   const isNew = !seenAtStart.has(keyOf(s));
   const chips = [statusChip(s, M)];
   if (s.kind === 'flipped') chips.push('<span class="chip idle">Flipped resistance</span>');
+  if (s.forming) chips.push(`<span class="chip idle">${n[0]} candle still forming</span>`);
   if (s.reclaimed) chips.push('<span class="chip idle">Reclaimed once</span>');
   if (s.status === 'watching') chips.push(`<button class="rm" type="button" data-key="${wkey(s)}">Remove</button>`);
 
   const rows = [];
-  rows.push(`<div><dt>Support</dt><dd>${fp(s.S)}<small>${s.kind === 'flipped' ? 'flipped, resistance of ' : 'from '}${dfmt(s.srcT)}</small></dd></div>`);
-  rows.push(`<div><dt>First touch</dt><dd>${fp(s.low1)}<small>${tfmt(s.touchT)}</small></dd></div>`);
-  rows.push(`<div><dt>${s.route === 'exception' ? 'New resistance' : 'Resistance'}</dt><dd>${fp(s.R)}</dd></div>`);
-  if (s.mtfBroken) rows.push(`<div><dt>${n[1]} close above</dt><dd>${tfmt(s.mtfT)}</dd></div>`);
-  else rows.push(`<div><dt>Needs ${n[1]} close above</dt><dd>${((s.R / s.price - 1) * 100).toFixed(2)}%<small>from last price</small></dd></div>`);
-  if (s.SH !== null && s.SH !== undefined)
-    rows.push(`<div><dt>${n[2]} swing high</dt><dd>${fp(s.SH)}<small>${s.ltfDone ? 'closed above ' + tfmt(s.ltfT - M.LD) : 'close above needed'}</small></dd></div>`);
   if (s.route === 'exception') rows.push(`<div><dt>Sweep</dt><dd>${fp(s.sweepLow)}<small>${tfmt(s.sweepT)}</small></dd></div>`);
   if (s.crt) rows.push(`<div><dt>CRT low swept</dt><dd>${fp(s.crtLow)}<small>${dfmt(s.crtT)}</small></dd></div>`);
-  if (s.lhr) rows.push(`<div><dt>Support age</dt><dd>${Math.floor(s.age / DAY)} days</dd></div>`);
   if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} resistance</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
-
-  // Timeline: the exact candles to look for on the chart, oldest first. Dates are UTC candle opens.
-  const cd = t => (mode === 'W1' ? 'week of ' : '') + dfmt(t);
-  const tl = [];
-  if (s.kind === 'flipped') {
-    tl.push(['Resistance', `${n[0]} bullish candle of ${cd(s.srcT)}, closed at ${fp(s.S)}`]);
-    tl.push(['Closed above', `${n[0]} candle of ${cd(s.flipT)}. It became support.`]);
-  } else {
-    tl.push(['Support', `${n[0]} bearish candle of ${cd(s.srcT)}, closed at ${fp(s.S)}. Next candle is bullish.`]);
-  }
-  if (s.reclaimed) {
-    tl.push(['Broken', `${n[0]} candle of ${cd(s.brokeT)} closed below ${fp(s.S)}`]);
-    tl.push(['Reclaimed', `${n[0]} candle of ${cd(s.reclaimT)} closed back above`]);
-  }
-  tl.push(['Rejected', `${n[0]} candle of ${cd(s.dayT)} (the last closed one). First touch ${tfmt(s.touchT)}, low ${fp(s.low1)}.`, 1]);
-  if (s.resT) tl.push(['Resistance', `${n[1]} bullish candle of ${tfmt(s.resT)}, closed at ${fp(s.R)}`]);
-  if (s.shT) tl.push([n[2] + ' swing high', `${tfmt(s.shT)}, high ${fp(s.SH)}`]);
-  const tlHtml = `<ul class="tl">${tl.map(x => `<li${x[2] ? ' class="hot"' : ''}><b>${x[0]}</b><span>${x[1]}</span></li>`).join('')}</ul>`;
 
   return `<article class="card">
     <div class="head">
@@ -537,14 +550,13 @@ function card(s) {
       <span class="px">${fp(s.price)}</span>
     </div>
     <div class="chips">${chips.join('')}</div>
-    <dl class="grid">${rows.join('')}</dl>
-    ${tlHtml}
+    ${rows.length ? `<dl class="grid">${rows.join('')}</dl>` : ''}
   </article>`;
 }
 
 function render() {
   const by = { snr: [], lhr: [], crt: [], both: [] };
-  results.forEach(s => by[colOf(s)].push(s));
+  results.filter(s => s.status === 'triggered').forEach(s => by[colOf(s)].push(s));
   COLS.forEach(k => {
     by[k].sort((a, b) => a.status === b.status
       ? (a.status === 'triggered' ? b.doneT - a.doneT : (a.R / a.price) - (b.R / b.price))
@@ -559,7 +571,7 @@ function render() {
     $('list').innerHTML = `<div class="empty">${msg}</div>`;
   }
   const bits = [];
-  if (watch.length) bits.push(watch.length + ' saved to watch');
+  if (watch.length) bits.push(watch.length + ' incomplete, tracked in the background');
   if (seen.size) bits.push(seen.size + ' alerts seen');
   $('seenline').textContent = bits.join(' · ');
   const hints = {
@@ -647,13 +659,13 @@ async function scan() {
     const pool = new Map();
     watch.concat(recentTrig.filter(s => now - s.doneT < M.keep)).forEach(w => pool.set(wkey(w), w));
     const saved = [];
-    pool.forEach((w, k) => { if (w.dayT !== prevT && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
+    pool.forEach((w, k) => { if (w.dayT !== prevT && w.dayT !== prevT + M.HD && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
     scanned.total = list.length + saved.length;
     setStatus('Scanning', `0 / ${scanned.total}`);
 
-    const getK = async (sym, i, dur, n) => {
+    const getK = async (sym, i, dur, n, keep) => {
       const j = await api(`/v5/market/kline?category=spot&symbol=${sym}&interval=${M.iv[i]}&limit=${n}`, ctrl.signal);
-      return parseK(j.result.list, dur, now);
+      return parseK(j.result.list, dur, now, keep);
     };
     const addResult = s => {
       const k = wkey(s);
@@ -671,23 +683,31 @@ async function scan() {
       while (!stopped && idx < list.length) {
         const p = list[idx++];
         try {
-          const htf = await getK(p.symbol, 0, M.HD, LBm.htf);
-          if (htf.length && htf[htf.length - 1].t === prevT) {
-            const rejs = findRejections(htf, M);
-            if (rejs.length && !stopped) {
-              const [mtf, ltf] = await Promise.all([getK(p.symbol, 1, M.MD, LBm.mtf), getK(p.symbol, 2, M.LD, LBm.ltf)]);
-              tagRejections(rejs, htf, M);
-              rejs.forEach(r => {
-                const s = evaluate(r, mtf, ltf, M);
-                if (!s) return;
-                s.symbol = p.symbol; s.price = p.price; s.vol = p.vol;
-                if (dismissed.has(wkey(s))) return;
-                s.dRes = htfResistance(htf, mtf, s.S, s.dayT, s.touchT);
-                if (htfTouched(mtf, s)) return;
-                addResult(s);
-              });
-              scheduleRender();
-            }
+          const htfAll = await getK(p.symbol, 0, M.HD, LBm.htf, true);
+          const formingK = htfAll.length && htfAll[htfAll.length - 1].t + M.HD > now ? htfAll[htfAll.length - 1] : null;
+          const htf = formingK ? htfAll.slice(0, -1) : htfAll;
+          // The last closed candle, and the candle still forming (its price so far counts as its close).
+          const cands = [];
+          if (htf.length && htf[htf.length - 1].t === prevT) cands.push({ h: htf, forming: false });
+          if (formingK && htf.length && formingK.t === prevT + M.HD) cands.push({ h: htfAll, forming: true });
+          let mtf = null, ltf = null, mtfF = null;
+          for (const cd of cands) {
+            if (stopped) break;
+            const rejs = findRejections(cd.h, M);
+            if (!rejs.length) continue;
+            if (!mtf) { const [ma, l2] = await Promise.all([getK(p.symbol, 1, M.MD, LBm.mtf, true), getK(p.symbol, 2, M.LD, LBm.ltf)]); ltf = l2; mtfF = ma.length && ma[ma.length - 1].t + M.MD > now ? ma[ma.length - 1] : null; mtf = mtfF ? ma.slice(0, -1) : ma; }
+            tagRejections(rejs, cd.h, M);
+            rejs.forEach(r => {
+              r.forming = cd.forming;
+              const s = evaluate(r, mtf, ltf, M);
+              if (!s) return;
+              s.symbol = p.symbol; s.price = p.price; s.vol = p.vol; s.lhr = leftHand(ltf, s, M);
+              if (dismissed.has(wkey(s))) return;
+              s.dRes = htfResistance(cd.h, mtf, s.S, s.dayT, s.touchT);
+              if (htfTouched(mtf, s, mtfF)) return;
+              addResult(s);
+            });
+            scheduleRender();
           }
         } catch (e) {
           if (stopped || ctrl.signal.aborted) return;
@@ -706,12 +726,13 @@ async function scan() {
       while (!stopped && j2 < saved.length) {
         const w = saved[j2++], k = wkey(w);
         try {
-          const [mtf, ltf] = await Promise.all([getK(w.symbol, 1, M.MD, LBm.mtf), getK(w.symbol, 2, M.LD, LBm.ltf)]);
+          const [ma, ltf] = await Promise.all([getK(w.symbol, 1, M.MD, LBm.mtf, true), getK(w.symbol, 2, M.LD, LBm.ltf)]);
+          const mtfF = ma.length && ma[ma.length - 1].t + M.MD > now ? ma[ma.length - 1] : null, mtf = mtfF ? ma.slice(0, -1) : ma;
           processed.add(k);
           const s = evaluate(w, mtf, ltf, M);
           if (s) {
-            s.symbol = w.symbol; s.price = prices[w.symbol]; s.vol = w.vol;
-            if (!htfTouched(mtf, s)) { addResult(s); scheduleRender(); }
+            s.symbol = w.symbol; s.price = prices[w.symbol]; s.vol = w.vol; s.lhr = leftHand(ltf, s, M);
+            if (!htfTouched(mtf, s, mtfF)) { addResult(s); scheduleRender(); }
           }
         } catch (e) {
           if (stopped || ctrl.signal.aborted) return;
@@ -727,7 +748,7 @@ async function scan() {
     const keep = new Map();
     pool.forEach((w, k) => {
       if (dismissed.has(k) || !(prices[w.symbol] > 0)) return;
-      const handled = processed.has(k) || (!stopped && w.dayT === prevT);
+      const handled = processed.has(k) || (!stopped && (w.dayT === prevT || w.dayT === prevT + M.HD));
       if (!handled) keep.set(k, w);
     });
     results.forEach(s => keep.set(wkey(s), s));
