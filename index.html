@@ -176,7 +176,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
       <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
-      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. If a candle trades above the swing high but closes below it, its high becomes the new level that has to be closed above, and this repeats. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
+      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high always sits to the left of the touch, inside the move that touched the support. A bounce in that move that trades above it with a wick replaces it, so the highest such wick is the level. Once the support is touched the level is fixed, and only a close above it counts. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
@@ -320,6 +320,8 @@ function correctionHigh(ltf, ref, LD) {
     else if (c.l < ltf[m].l) { if (peak >= 0) lvl = peak; peak = -1; m = i; }
     else if (c.h > ltf[m].h && (peak < 0 || c.h > ltf[peak].h)) peak = i;
   }
+  // The touch candle is itself a lower low, so the last bounce is always complete here; a later bounce that trades above
+  // an earlier swing high (a wick) therefore replaces it.
   const idx = lvl >= 0 ? lvl : tm, kind = lvl >= 0 ? 'correction' : 'straight';
   return { h: ltf[idx].h, t: ltf[idx].t, afterT: ltf[e].t + LD, kind };
 }
@@ -338,18 +340,12 @@ function evaluate(rej, mtf, ltf, M) {
   }
   if (t1 < 0) return null;
   const low1 = mtf[t1].l;
-  // Close above the swing high, after the candle that touched the support. A candle that trades above the level but
-  // closes at or below it does not count: its high becomes the new level, and so on, until a candle closes above the
-  // current level.
+  // First LTF close above the swing high, after the candle that touched the support. The level is fixed once the
+  // support is touched: a wick above it that closes below changes nothing.
   const chk = lv => {
     if (!lv) return { SH: null, SHt: null, done: true, t: null };
-    let lvl = lv.h, lt = lv.t;
-    for (const k of ltf) {
-      if (k.t < lv.afterT) continue;
-      if (k.c > lvl) return { SH: lvl, SHt: lt, done: true, t: k.t + M.LD };
-      if (k.h > lvl) { lvl = k.h; lt = k.t; }
-    }
-    return { SH: lvl, SHt: lt, done: false, t: null };
+    for (const k of ltf) if (k.t >= lv.afterT && k.c > lv.h) return { SH: lv.h, SHt: lv.t, done: true, t: k.t + M.LD };
+    return { SH: lv.h, SHt: lv.t, done: false, t: null };
   };
   const track = (R, resT, kb, lv) => {
     const c = chk(lv);
