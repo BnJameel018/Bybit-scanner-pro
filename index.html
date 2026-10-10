@@ -180,7 +180,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
-      <li>Only triggered setups are listed. Incomplete ones are saved on this phone and rechecked on each scan, and appear once they trigger. The rejection candle may still be forming on the rejection timeframe; its price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support. Triggered setups stay listed for 3 days (14 days in W1 mode).</li>
+      <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it; rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
     </ol>
   </details>
 
@@ -633,10 +633,12 @@ function alertNew() {
 }
 
 // ---------- Mode and settings ----------
+// A rejection counts only while its candle is the one still forming or the one just before it. Older ones are ignored.
+const liveDay = (t, M, now) => { const p = prevCandleT(now, M.HD); return t === p || t === p + M.HD; };
 function loadMode() {
   const M = MODES[mode], now = Date.now();
-  watch = store.get('rs2_watch_' + mode, []);
-  recentTrig = store.get('rs2_trig_' + mode, []).filter(s => now - s.doneT < M.keep);
+  watch = store.get('rs2_watch_' + mode, []).filter(s => liveDay(s.dayT, M, now));
+  recentTrig = store.get('rs2_trig_' + mode, []).filter(s => liveDay(s.dayT, M, now));
   results = recentTrig.slice();
 }
 function saveCfg() {
@@ -680,7 +682,7 @@ async function scan() {
 
     // Saved setups from earlier candles. Setups from the latest candle are found again by the main pass.
     const pool = new Map();
-    watch.concat(recentTrig.filter(s => now - s.doneT < M.keep)).forEach(w => pool.set(wkey(w), w));
+    watch.concat(recentTrig).filter(w => liveDay(w.dayT, M, now)).forEach(w => pool.set(wkey(w), w));
     const saved = [];
     pool.forEach((w, k) => { if (w.dayT !== prevT && w.dayT !== prevT + M.HD && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
     scanned.total = list.length + saved.length;
@@ -776,8 +778,8 @@ async function scan() {
     });
     results.forEach(s => keep.set(wkey(s), s));
     if (md === mode) {
-      watch = Array.from(keep.values()).filter(s => s.status === 'watching');
-      recentTrig = Array.from(keep.values()).filter(s => s.status === 'triggered' && now - s.doneT < M.keep);
+      watch = Array.from(keep.values()).filter(s => s.status === 'watching' && liveDay(s.dayT, M, now));
+      recentTrig = Array.from(keep.values()).filter(s => s.status === 'triggered' && liveDay(s.dayT, M, now));
       store.set('rs2_watch_' + md, watch); store.set('rs2_trig_' + md, recentTrig);
     }
     store.set('rs2_seen', Array.from(seen));
