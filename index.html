@@ -322,7 +322,7 @@ function correctionHigh(ltf, ref, LD) {
   return { h: ltf[idx].h, t: ltf[idx].t, afterT: ltf[e].t + LD, kind };
 }
 
-const RK = ['forming', 'S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes'];
+const RK = ['forming', 'S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes', 'dResT'];
 const pick = r => { const o = {}; RK.forEach(k => { o[k] = r[k]; }); return o; };
 
 // Break-timeframe candles (mtf) and swing-high-timeframe candles (ltf), oldest first, closed only.
@@ -402,9 +402,9 @@ function evaluate(rej, mtf, ltf, M) {
 
 // Lowest valid resistance on the rejection timeframe above the support at the moment of the first touch.
 // `htf` ends with the rejection candle.
-function htfResistance(htf, mtf, S, dayT, touchT) {
+function htfResistanceInfo(htf, mtf, S, dayT, touchT) {
   const di = htf.length - 1;
-  let best = null;
+  let best = null, bestT = null;
   for (let j = 0; j + 1 < di; j++) {
     if (!(bull(htf[j]) && bear(htf[j + 1]))) continue;
     const r = htf[j].c;
@@ -412,10 +412,11 @@ function htfResistance(htf, mtf, S, dayT, touchT) {
     let ok = true;
     for (let m = j + 2; m < di; m++) { if (htf[m].h >= r) { ok = false; break; } }
     if (ok) for (const k of mtf) { if (k.t >= dayT && k.t < touchT && k.h >= r) { ok = false; break; } }
-    if (ok && (best === null || r < best)) best = r;
+    if (ok && (best === null || r < best)) { best = r; bestT = htf[j].t; }
   }
-  return best;
+  return best === null ? null : { r: best, t: bestT };
 }
+function htfResistance(htf, mtf, S, dayT, touchT) { const x = htfResistanceInfo(htf, mtf, S, dayT, touchT); return x ? x.r : null; }
 
 // Dropped when price has reached that resistance since the first touch (the still-forming candle counts, `form`)
 // and no closed candle on the break timeframe has closed above it. A close above means it was broken, not just touched.
@@ -521,6 +522,8 @@ function chartLink(s, M) {
   seg('res', s.resT, s.mtfBroken ? s.mtfT : 0, s.R, s.route === 'exception' ? 'New resistance' : 'Resistance', [iv[1], iv[2]]);
   // Swing high: from the swing high to the candle that closed above it. Shown on its own timeframe only.
   if (s.SH !== null && s.SH !== undefined) seg('sh', s.shT, s.ltfDone && s.ltfT ? s.ltfT - M.LD : 0, s.SH, n[2] + ' swing high', [iv[2]]);
+  // Target: the next daily (D1 mode) or weekly (W1 mode) resistance, as a ray, once the setup has triggered.
+  if (s.status === 'triggered' && s.dRes !== null && s.dRes !== undefined) seg('tgt', s.dResT || s.touchT, 0, s.dRes, 'Target', [iv[0], iv[1], iv[2]]);
   const hint = `Support on ${n[0]}/${n[1]}/${n[2]} · Resistance on ${n[1]}/${n[2]} · Swing high on ${n[2]}`;
   const payload = { sym: s.symbol, tf: iv[1], title: (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
   return CHART_URL + '?sig=' + encodeURIComponent(JSON.stringify(payload));
@@ -703,7 +706,7 @@ async function scan() {
               if (!s) return;
               s.symbol = p.symbol; s.price = p.price; s.vol = p.vol; s.lhr = leftHand(ltf, s, M);
               if (dismissed.has(wkey(s))) return;
-              s.dRes = htfResistance(cd.h, mtf, s.S, s.dayT, s.touchT);
+              { const di = htfResistanceInfo(cd.h, mtf, s.S, s.dayT, s.touchT); s.dRes = di ? di.r : null; s.dResT = di ? di.t : null; }
               if (htfTouched(mtf, s, mtfF)) return;
               addResult(s);
             });
