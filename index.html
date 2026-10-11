@@ -176,7 +176,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
       <li>Resistance: a bullish then bearish candle on the break timeframe, at the bullish close, above the support, completed before the first touch and never closed above before it. The lowest one is used.</li>
-      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high always sits to the left of the touch, inside the move that touched the support. A bounce in that move that trades above it with a wick replaces it, so the highest such wick is the level. Once the support is touched the level is fixed, and only a close above it counts. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
+      <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high always sits to the left of the touch, inside the move that touched the support. A bearish move has lower highs, so if price trades above the move's top or closes above its last correction high, that move is over and the swing high is read again from the new top. A bounce in that move that trades above it with a wick replaces it, so the highest such wick is the level. Once the support is touched the level is fixed, and only a close above it counts. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
@@ -311,12 +311,13 @@ function correctionHigh(ltf, ref, LD) {
   }
   if (e < 0) { for (let i = 0; i < ltf.length && ltf[i].t < ref.from; i++) e = i; }
   if (e < 0) return null;
-  // tm = top of the bearish move being read. A candle that trades above it is a higher high: that move is over, so the
-  // read restarts from that candle. This keeps the level inside the move that actually falls into the support.
+  // tm = top of the bearish move being read. A candle that trades above it, or closes above the last correction high, is a
+  // higher high: a bearish move has lower highs, so that move is over and the read restarts from that candle. This keeps
+  // the level inside the move that actually falls into the support, not in an older downtrend that price has since left.
   let tm = 0, m = 0, peak = -1, lvl = -1;
   for (let i = 1; i <= e; i++) {
     const c = ltf[i];
-    if (c.h > ltf[tm].h) { tm = i; m = i; peak = -1; lvl = -1; }
+    if (c.h > ltf[tm].h || (lvl >= 0 && c.c > ltf[lvl].h)) { tm = i; m = i; peak = -1; lvl = -1; }
     else if (c.l < ltf[m].l) { if (peak >= 0) lvl = peak; peak = -1; m = i; }
     else if (c.h > ltf[m].h && (peak < 0 || c.h > ltf[peak].h)) peak = i;
   }
