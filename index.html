@@ -53,6 +53,8 @@ h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.
 }
 .mode button[aria-pressed=true]{background:var(--accent); color:var(--on-accent)}
 .mode button:disabled{opacity:.6; cursor:default}
+.mode.three{grid-template-columns:1fr 1fr 1fr}
+.mode.three button{font-size:12px; padding:12px 2px}
 
 .settings{display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; align-items:end}
 .field{display:flex; flex-direction:column; gap:5px; min-width:0}
@@ -143,9 +145,10 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <button type="button" id="s-long" aria-pressed="true">Long</button>
       <button type="button" id="s-short" aria-pressed="false">Short</button>
     </div>
-    <div class="mode" role="group" aria-label="Timeframe set">
+    <div class="mode three" role="group" aria-label="Timeframe set">
       <button type="button" id="m-D1" aria-pressed="true">D1 · H4 · H1</button>
       <button type="button" id="m-W1" aria-pressed="false">W1 · D1 · H4</button>
+      <button type="button" id="m-H4" aria-pressed="false">H4 · H1 · M15</button>
     </div>
     <p class="hint" id="modeHint" style="margin-top:8px"></p>
   </section>
@@ -175,7 +178,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
   <details class="rules">
     <summary>How the rules are read</summary>
     <ol>
-      <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. The last closed candle on the rejection timeframe and the one still forming are checked for a rejection.</li>
+      <li>Timeframes. D1 mode: rejection on D1, resistance break on H4, swing-high close on H1. W1 mode: rejection on W1, resistance break on D1, swing-high close on H4. H4 mode: rejection on H4, resistance break on H1, swing-high close on M15. In D1 and W1 modes the last closed candle on the rejection timeframe and the one still forming are checked for a rejection. In H4 mode the forming H4 candle and the six closed ones before it are checked (seven in total).</li>
       <li>Support: a bearish candle followed by a bullish one, at the bearish candle's close. Touches count from the candle after the bullish one. A resistance (bullish candle then bearish, at the bullish close) that a candle has closed above also becomes a support, with touches counted after that closing candle.</li>
       <li>A close below a support does not end it if a later, different candle closes back above it. That break and reclaim can happen once. A second close below ends it. A flipped resistance gets no reclaim: its first close below ends it for good.</li>
       <li>Rejection: the last closed candle is the first to touch the support (low at or under it) after the reclaim, if there was one, and it closes above it.</li>
@@ -184,7 +187,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
-      <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it; rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
+      <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it (in H4 mode: the forming candle or any of the six closed ones before it); rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
       <li>Short side: the Short button runs every rule above mirrored. A resistance (bullish then bearish candle, at the bullish close) is rejected by a high that reaches it and a close back below it. The support to break is the highest bearish then bullish pair below it on the break timeframe, formed before the touch. The swing low is the low of the most recent valid correction in the bullish move into the resistance, and the trigger is a close below it. The target is the next support below, and a setup is dropped if price has already reached it without a close below. CRT sweeps the high of an untouched candle; LHR needs the resistance to belong to a different move.</li>
     </ol>
   </details>
@@ -196,10 +199,11 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
 
 <script>
 // ==== LOGIC START
-const DAY = 864e5, WEEK = 7 * DAY, H1MS = 36e5, H4MS = 144e5;
+const DAY = 864e5, WEEK = 7 * DAY, M15MS = 9e5, H1MS = 36e5, H4MS = 144e5;
 const MODES = {
-  D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], keep: 3 * DAY, reset: 'daily' },
-  W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], keep: 14 * DAY, reset: 'weekly' }
+  D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], keep: 3 * DAY, reset: 'daily reset', win: 2 },   // win = rejection-timeframe candles checked: the forming one plus (win - 1) closed
+  W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], keep: 14 * DAY, reset: 'weekly reset', win: 2 },
+  H4: { HD: H4MS, MD: H1MS, LD: M15MS, iv: ['240', '60', '15'], names: ['H4', 'H1', 'M15'], keep: 2 * DAY, reset: 'H4 candle close', win: 7 }
 };
 const bull = k => k.c > k.o, bear = k => k.c < k.o;
 
@@ -458,7 +462,7 @@ function htfTouched(mtf, s, form) {
 // ---------- App ----------
 const HOSTS = ['https://api.bytick.com', 'https://api.bybit.com'];
 let hostIdx = 0;
-const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 } };
+const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 }, H4: { htf: 250, mtf: 1000, ltf: 1000 } };
 const CONC = 6, TIMEOUT = 15000;
 const COLS = ['snr', 'lhr', 'crt', 'both'];
 const $ = id => document.getElementById(id);
@@ -526,6 +530,7 @@ function fp(x) {
 }
 const tfmt = t => new Date(t).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const dfmt = t => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const cfmt = t => (MODES[mode].HD < DAY ? tfmt(t) : dfmt(t));
 
 // ---------- Rendering ----------
 let queued = false;
@@ -536,7 +541,7 @@ function statusChip(s, M) {
   const lvl = sh ? 'support' : 'resistance', sw = sh ? 'swing low' : 'swing high', dir = sh ? 'below' : 'above';
   if (s.status === 'triggered') {
     if (s.route === 'exception') return '<span class="chip go">Second-touch sweep, triggered</span>';
-    return `<span class="chip go">Triggered ${s.when === 'reset' ? 'before' : 'after'} the ${M.reset} reset</span>`;
+    return `<span class="chip go">Triggered ${s.when === 'reset' ? 'before' : 'after'} the ${M.reset}</span>`;
   }
   if (s.route === 'exception' && !s.mtfBroken) return `<span class="chip watch">Swept first ${sh ? 'high' : 'low'}, watching new ${lvl}</span>`;
   if (s.mtfBroken && !s.ltfDone) return `<span class="chip watch">${n[1]} closed ${dir}, waiting for ${n[2]} ${sw}</span>`;
@@ -576,7 +581,7 @@ function card(s) {
 
   const rows = [];
   if (s.route === 'exception') rows.push(`<div><dt>Sweep</dt><dd>${fp(s.sweepLow)}<small>${tfmt(s.sweepT)}</small></dd></div>`);
-  if (s.crt) rows.push(`<div><dt>CRT ${s.side === 'short' ? 'high' : 'low'} swept</dt><dd>${fp(s.crtLow)}<small>${dfmt(s.crtT)}</small></dd></div>`);
+  if (s.crt) rows.push(`<div><dt>CRT ${s.side === 'short' ? 'high' : 'low'} swept</dt><dd>${fp(s.crtLow)}<small>${cfmt(s.crtT)}</small></dd></div>`);
   if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} ${s.side === 'short' ? 'support' : 'resistance'}</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
 
   return `<article class="card">
@@ -613,14 +618,16 @@ function render() {
   $('seenline').textContent = bits.join(' · ');
   const hints = side === 'short' ? {
     D1: 'Short side. Resistance rejection on D1, support break on H4, swing-low close on H1.',
-    W1: 'Short side. Resistance rejection on W1, support break on D1, swing-low close on H4.'
+    W1: 'Short side. Resistance rejection on W1, support break on D1, swing-low close on H4.',
+    H4: 'Short side. Resistance rejection on H4, support break on H1, swing-low close on M15.'
   } : {
     D1: 'Rejection on D1, resistance break on H4, swing-high close on H1.',
-    W1: 'Rejection on W1, resistance break on D1, swing-high close on H4.'
+    W1: 'Rejection on W1, resistance break on D1, swing-high close on H4.',
+    H4: 'Rejection on H4, resistance break on H1, swing-high close on M15. Checks the forming candle and 6 closed ones.'
   };
   $('modeHint').textContent = hints[mode];
   ['long', 'short'].forEach(sd => { $('s-' + sd).setAttribute('aria-pressed', String(sd === side)); $('s-' + sd).disabled = running; });
-  ['D1', 'W1'].forEach(m => { $('m-' + m).setAttribute('aria-pressed', String(m === mode)); $('m-' + m).disabled = running; });
+  ['D1', 'W1', 'H4'].forEach(m => { $('m-' + m).setAttribute('aria-pressed', String(m === mode)); $('m-' + m).disabled = running; });
 }
 
 function setStatus(text, meta) {
@@ -651,8 +658,8 @@ function alertNew() {
 }
 
 // ---------- Mode and settings ----------
-// A rejection counts only while its candle is the one still forming or the one just before it. Older ones are ignored.
-const liveDay = (t, M, now) => { const p = prevCandleT(now, M.HD); return t === p || t === p + M.HD; };
+// A rejection counts only while its candle is the forming one or one of the (win - 1) closed candles before it. Older ones are ignored.
+const liveDay = (t, M, now) => { const p = prevCandleT(now, M.HD); return t <= p + M.HD && t >= p - (M.win - 2) * M.HD && (t - p) % M.HD === 0; };
 function loadMode() {
   const M = MODES[mode], now = Date.now();
   watch = store.get('rs2_watch_' + skey(mode), []).filter(s => liveDay(s.dayT, M, now));
@@ -689,7 +696,9 @@ async function scan() {
     const tk = await api('/v5/market/tickers?category=spot', ctrl.signal);
     now = +tk.time || Date.now();
     const prevT = prevCandleT(now, M.HD);
-    $('dayline').textContent = `${M.names[0]} candle opened ${dfmt(prevT)} (UTC), closed ${tfmt(prevT + M.HD)} your time.`;
+    $('dayline').textContent = M.win > 2
+      ? `Checking the forming ${M.names[0]} candle and the ${M.win - 1} closed before it, back to ${tfmt(prevT - (M.win - 2) * M.HD)} your time.`
+      : `${M.names[0]} candle opened ${dfmt(prevT)} (UTC), closed ${tfmt(prevT + M.HD)} your time.`;
 
     const prices = {};
     tk.result.list.forEach(x => { prices[x.symbol] = parseFloat(x.lastPrice); });
@@ -702,7 +711,7 @@ async function scan() {
     const pool = new Map();
     watch.concat(recentTrig).filter(w => liveDay(w.dayT, M, now)).forEach(w => pool.set(wkey(w), w));
     const saved = [];
-    pool.forEach((w, k) => { if (w.dayT !== prevT && w.dayT !== prevT + M.HD && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
+    pool.forEach((w, k) => { if (!liveDay(w.dayT, M, now) && prices[w.symbol] > 0 && !dismissed.has(k)) saved.push(w); });
     scanned.total = list.length + saved.length;
     setStatus('Scanning', `0 / ${scanned.total}`);
 
@@ -732,7 +741,13 @@ async function scan() {
           const htf = formingK ? htfAll.slice(0, -1) : htfAll;
           // The last closed candle, and the candle still forming (its price so far counts as its close).
           const cands = [];
-          if (htf.length && htf[htf.length - 1].t === prevT) cands.push({ h: htf, forming: false });
+          // Closed candles, newest first: the last closed one and up to (win - 2) before it. Then the forming one.
+          for (let jb = 0; jb < M.win - 1; jb++) {
+            const tt = prevT - jb * M.HD;
+            let ix = -1;
+            for (let q = htf.length - 1; q >= 0 && htf[q].t >= tt; q--) if (htf[q].t === tt) { ix = q; break; }
+            if (ix >= 0) cands.push({ h: ix === htf.length - 1 ? htf : htf.slice(0, ix + 1), forming: false });
+          }
           if (formingK && htf.length && formingK.t === prevT + M.HD) cands.push({ h: htfAll, forming: true });
           let mtf = null, ltf = null, mtfF = null;
           for (const cd of cands) {
@@ -798,7 +813,7 @@ async function scan() {
     const keep = new Map();
     pool.forEach((w, k) => {
       if (dismissed.has(k) || !(prices[w.symbol] > 0)) return;
-      const handled = processed.has(k) || (!stopped && (w.dayT === prevT || w.dayT === prevT + M.HD));
+      const handled = processed.has(k) || (!stopped && liveDay(w.dayT, M, now));
       if (!handled) keep.set(k, w);
     });
     results.forEach(s => keep.set(wkey(s), s));
@@ -832,7 +847,7 @@ function stop() { stopped = true; try { ctrl.abort(); } catch (e) {} }
 
 $('go').addEventListener('click', () => { running ? stop() : scan(); });
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
-['D1', 'W1'].forEach(m => $('m-' + m).addEventListener('click', () => {
+['D1', 'W1', 'H4'].forEach(m => $('m-' + m).addEventListener('click', () => {
   if (running || m === mode) return;
   mode = m; saveCfg(); loadMode(); scanned.total = 0; setStatus('Ready', ''); render();
 }));
@@ -853,7 +868,7 @@ $('list').addEventListener('click', e => {
 
 const cfg = store.get('rs2_cfg', null);
 if (cfg) {
-  if (cfg.mode === 'W1') mode = 'W1';
+  if (MODES[cfg.mode]) mode = cfg.mode;
   if (cfg.side === 'short') side = 'short';
   $('maxPrice').value = cfg.maxPrice; $('minVol').value = cfg.minVol; $('sound').checked = cfg.sound !== false;
 }
