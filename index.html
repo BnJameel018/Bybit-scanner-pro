@@ -139,6 +139,10 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
   </header>
 
   <section aria-label="Timeframes">
+    <div class="mode" role="group" aria-label="Side" style="margin-bottom:8px">
+      <button type="button" id="s-long" aria-pressed="true">Long</button>
+      <button type="button" id="s-short" aria-pressed="false">Short</button>
+    </div>
     <div class="mode" role="group" aria-label="Timeframe set">
       <button type="button" id="m-D1" aria-pressed="true">D1 · H4 · H1</button>
       <button type="button" id="m-W1" aria-pressed="false">W1 · D1 · H4</button>
@@ -181,6 +185,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
       <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it; rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
+      <li>Short side: the Short button runs every rule above mirrored. A resistance (bullish then bearish candle, at the bullish close) is rejected by a high that reaches it and a close back below it. The support to break is the highest bearish then bullish pair below it on the break timeframe, formed before the touch. The swing low is the low of the most recent valid correction in the bullish move into the resistance, and the trigger is a close below it. The target is the next support below, and a setup is dropped if price has already reached it without a close below. CRT sweeps the high of an untouched candle; LHR needs the resistance to belong to a different move.</li>
     </ol>
   </details>
 
@@ -462,14 +467,19 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
 
-let mode = 'D1', tab = 'snr', results = [], running = false, stopped = false, ctrl = null, wake = null, actx = null;
+let side = 'long', mode = 'D1', tab = 'snr', results = [], running = false, stopped = false, ctrl = null, wake = null, actx = null;
 let watch = [], recentTrig = [];
 let seen = new Set(store.get('rs2_seen', [])), seenAtStart = new Set(seen);
 let dismissed = new Set(store.get('rs2_dismissed', []));
 let scanned = { done: 0, total: 0, failed: 0, t0: 0 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const wkey = s => mode + '|' + s.symbol + '|' + s.S + '|' + s.dayT;
+// Short side = the long rules run on upside-down candles (prices negated, highs and lows swapped), prices flipped back after.
+const FLIP_KEYS = ['S', 'low1', 'R', 'SH', 'sweepLow', 'crtLow', 'dRes'];
+const flipC = k => ({ t: k.t, o: -k.o, h: -k.l, l: -k.h, c: -k.c });
+function flipFields(o) { const r = Object.assign({}, o); FLIP_KEYS.forEach(k => { if (typeof r[k] === 'number' && isFinite(r[k])) r[k] = -r[k]; }); return r; }
+const skey = md => md + (side === 'short' ? '_S' : '');
+const wkey = s => (side === 'short' ? 'S|' : '') + mode + '|' + s.symbol + '|' + s.S + '|' + s.dayT;
 const keyOf = s => wkey(s) + '|' + s.touchT + '|' + s.status;
 const colOf = s => (s.lhr && s.crt ? 'both' : s.lhr ? 'lhr' : s.crt ? 'crt' : 'snr');
 
@@ -522,32 +532,35 @@ let queued = false;
 function scheduleRender() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; render(); }); }
 
 function statusChip(s, M) {
-  const n = M.names;
+  const n = M.names, sh = s.side === 'short';
+  const lvl = sh ? 'support' : 'resistance', sw = sh ? 'swing low' : 'swing high', dir = sh ? 'below' : 'above';
   if (s.status === 'triggered') {
     if (s.route === 'exception') return '<span class="chip go">Second-touch sweep, triggered</span>';
     return `<span class="chip go">Triggered ${s.when === 'reset' ? 'before' : 'after'} the ${M.reset} reset</span>`;
   }
-  if (s.route === 'exception' && !s.mtfBroken) return '<span class="chip watch">Swept first low, watching new resistance</span>';
-  if (s.mtfBroken && !s.ltfDone) return `<span class="chip watch">${n[1]} closed above, waiting for ${n[2]} swing high</span>`;
-  if (!s.mtfBroken && s.SH !== null && s.ltfDone) return `<span class="chip watch">${n[2]} closed above swing high, waiting for ${n[1]} break</span>`;
-  return '<span class="chip watch">Resistance not broken</span>';
+  if (s.route === 'exception' && !s.mtfBroken) return `<span class="chip watch">Swept first ${sh ? 'high' : 'low'}, watching new ${lvl}</span>`;
+  if (s.mtfBroken && !s.ltfDone) return `<span class="chip watch">${n[1]} closed ${dir}, waiting for ${n[2]} ${sw}</span>`;
+  if (!s.mtfBroken && s.SH !== null && s.ltfDone) return `<span class="chip watch">${n[2]} closed ${dir} ${sw}, waiting for ${n[1]} break</span>`;
+  return `<span class="chip watch">${sh ? 'Support' : 'Resistance'} not broken</span>`;
 }
 
 // Link to the chart app. Same GitHub account, so the relative path works when the repo is named chart-app.
 const CHART_URL = '../Chart-app/';
 function chartLink(s, M) {
-  const n = M.names, iv = M.iv, m = [];
+  const n = M.names, iv = M.iv, m = [], sh = s.side === 'short';
   const seg = (c, t1, t2, p, l, tfs) => { if (t1 && p !== null && p !== undefined && isFinite(p)) m.push({ k: 'seg', c, t1, t2: t2 || 0, p, l, tfs }); };
-  // Support: from the rejected support to the candle that rejected it. Shown on the support timeframe and the two below.
-  seg('sup', s.srcT, s.touchT, s.S, s.kind === 'flipped' ? 'Support (flipped)' : 'Support', [iv[0], iv[1], iv[2]]);
-  // Resistance: from the resistance to the candle that closed above it. Shown on its timeframe and the next one below.
-  seg('res', s.resT, s.mtfBroken ? s.mtfT : 0, s.R, s.route === 'exception' ? 'New resistance' : 'Resistance', [iv[1], iv[2]]);
-  // Swing high: from the swing high to the candle that closed above it. Shown on its own timeframe only.
-  if (s.SH !== null && s.SH !== undefined) seg('sh', s.shT, s.ltfDone && s.ltfT ? s.ltfT - M.LD : 0, s.SH, n[2] + ' swing high', [iv[2]]);
-  // Target: the next daily (D1 mode) or weekly (W1 mode) resistance, as a ray, once the setup has triggered.
+  const flip = s.kind === 'flipped' ? ' (flipped)' : '';
+  // Rejected level: from the level to the candle that rejected it. Shown on its timeframe and the two below.
+  seg(sh ? 'res' : 'sup', s.srcT, s.touchT, s.S, (sh ? 'Resistance' : 'Support') + flip, [iv[0], iv[1], iv[2]]);
+  // Broken level: from the level to the candle that closed through it. Shown on its timeframe and the next one below.
+  seg(sh ? 'sup' : 'res', s.resT, s.mtfBroken ? s.mtfT : 0, s.R, (s.route === 'exception' ? 'New ' : '') + (sh ? (s.route === 'exception' ? 'support' : 'Support') : (s.route === 'exception' ? 'resistance' : 'Resistance')), [iv[1], iv[2]]);
+  // Swing high (swing low for shorts): from the level to the candle that closed through it. Its own timeframe only.
+  if (s.SH !== null && s.SH !== undefined) seg('sh', s.shT, s.ltfDone && s.ltfT ? s.ltfT - M.LD : 0, s.SH, n[2] + (sh ? ' swing low' : ' swing high'), [iv[2]]);
+  // Target: the next daily (D1 mode) or weekly (W1 mode) level, as a ray, once the setup has triggered.
   if (s.status === 'triggered' && s.dRes !== null && s.dRes !== undefined) seg('tgt', s.dResT || s.touchT, 0, s.dRes, 'Target', [iv[0], iv[1], iv[2]]);
-  const hint = `Support on ${n[0]}/${n[1]}/${n[2]} · Resistance on ${n[1]}/${n[2]} · Swing high on ${n[2]}`;
-  const payload = { sym: s.symbol, tf: iv[1], title: (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
+  const hint = sh ? `Resistance on ${n[0]}/${n[1]}/${n[2]} · Support on ${n[1]}/${n[2]} · Swing low on ${n[2]}`
+                  : `Support on ${n[0]}/${n[1]}/${n[2]} · Resistance on ${n[1]}/${n[2]} · Swing high on ${n[2]}`;
+  const payload = { sym: s.symbol, tf: iv[1], title: (sh ? 'Short · ' : '') + (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
   return CHART_URL + '?sig=' + encodeURIComponent(JSON.stringify(payload));
 }
 
@@ -556,15 +569,15 @@ function card(s) {
   const base = s.symbol.slice(0, -4);
   const isNew = !seenAtStart.has(keyOf(s));
   const chips = [statusChip(s, M)];
-  if (s.kind === 'flipped') chips.push('<span class="chip idle">Flipped resistance</span>');
+  if (s.kind === 'flipped') chips.push(`<span class="chip idle">Flipped ${s.side === 'short' ? 'support' : 'resistance'}</span>`);
   if (s.forming) chips.push(`<span class="chip idle">${n[0]} candle still forming</span>`);
   if (s.reclaimed) chips.push('<span class="chip idle">Reclaimed once</span>');
   if (s.status === 'watching') chips.push(`<button class="rm" type="button" data-key="${wkey(s)}">Remove</button>`);
 
   const rows = [];
   if (s.route === 'exception') rows.push(`<div><dt>Sweep</dt><dd>${fp(s.sweepLow)}<small>${tfmt(s.sweepT)}</small></dd></div>`);
-  if (s.crt) rows.push(`<div><dt>CRT low swept</dt><dd>${fp(s.crtLow)}<small>${dfmt(s.crtT)}</small></dd></div>`);
-  if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} resistance</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
+  if (s.crt) rows.push(`<div><dt>CRT ${s.side === 'short' ? 'high' : 'low'} swept</dt><dd>${fp(s.crtLow)}<small>${dfmt(s.crtT)}</small></dd></div>`);
+  if (s.dRes !== null && s.dRes !== undefined) rows.push(`<div><dt>${n[0]} ${s.side === 'short' ? 'support' : 'resistance'}</dt><dd>${fp(s.dRes)}<small>untouched</small></dd></div>`);
 
   return `<article class="card">
     <div class="head">
@@ -598,11 +611,15 @@ function render() {
   if (watch.length) bits.push(watch.length + ' incomplete, tracked in the background');
   if (seen.size) bits.push(seen.size + ' alerts seen');
   $('seenline').textContent = bits.join(' · ');
-  const hints = {
+  const hints = side === 'short' ? {
+    D1: 'Short side. Resistance rejection on D1, support break on H4, swing-low close on H1.',
+    W1: 'Short side. Resistance rejection on W1, support break on D1, swing-low close on H4.'
+  } : {
     D1: 'Rejection on D1, resistance break on H4, swing-high close on H1.',
     W1: 'Rejection on W1, resistance break on D1, swing-high close on H4.'
   };
   $('modeHint').textContent = hints[mode];
+  ['long', 'short'].forEach(sd => { $('s-' + sd).setAttribute('aria-pressed', String(sd === side)); $('s-' + sd).disabled = running; });
   ['D1', 'W1'].forEach(m => { $('m-' + m).setAttribute('aria-pressed', String(m === mode)); $('m-' + m).disabled = running; });
 }
 
@@ -638,12 +655,12 @@ function alertNew() {
 const liveDay = (t, M, now) => { const p = prevCandleT(now, M.HD); return t === p || t === p + M.HD; };
 function loadMode() {
   const M = MODES[mode], now = Date.now();
-  watch = store.get('rs2_watch_' + mode, []).filter(s => liveDay(s.dayT, M, now));
-  recentTrig = store.get('rs2_trig_' + mode, []).filter(s => liveDay(s.dayT, M, now));
+  watch = store.get('rs2_watch_' + skey(mode), []).filter(s => liveDay(s.dayT, M, now));
+  recentTrig = store.get('rs2_trig_' + skey(mode), []).filter(s => liveDay(s.dayT, M, now));
   results = recentTrig.slice();
 }
 function saveCfg() {
-  store.set('rs2_cfg', { mode, maxPrice: $('maxPrice').value, minVol: $('minVol').value, sound: $('sound').checked });
+  store.set('rs2_cfg', { mode, side, maxPrice: $('maxPrice').value, minVol: $('minVol').value, sound: $('sound').checked });
 }
 
 // ---------- Scan ----------
@@ -691,7 +708,8 @@ async function scan() {
 
     const getK = async (sym, i, dur, n, keep) => {
       const j = await api(`/v5/market/kline?category=spot&symbol=${sym}&interval=${M.iv[i]}&limit=${n}`, ctrl.signal);
-      return parseK(j.result.list, dur, now, keep);
+      const kl = parseK(j.result.list, dur, now, keep);
+      return side === 'short' ? kl.map(flipC) : kl;
     };
     const addResult = s => {
       const k = wkey(s);
@@ -725,12 +743,14 @@ async function scan() {
             tagRejections(rejs, cd.h, M);
             rejs.forEach(r => {
               r.forming = cd.forming;
-              const s = evaluate(r, mtf, ltf, M);
-              if (!s) return;
-              s.symbol = p.symbol; s.price = p.price; s.vol = p.vol; s.lhr = leftHand(ltf, s, M);
+              const s0 = evaluate(r, mtf, ltf, M);
+              if (!s0) return;
+              s0.lhr = leftHand(ltf, s0, M);
+              { const di = htfResistanceInfo(cd.h, mtf, s0.S, s0.dayT, s0.touchT); s0.dRes = di ? di.r : null; s0.dResT = di ? di.t : null; }
+              if (htfTouched(mtf, s0, mtfF)) return;
+              const s = side === 'short' ? flipFields(s0) : s0;
+              s.symbol = p.symbol; s.price = p.price; s.vol = p.vol; s.side = side;
               if (dismissed.has(wkey(s))) return;
-              { const di = htfResistanceInfo(cd.h, mtf, s.S, s.dayT, s.touchT); s.dRes = di ? di.r : null; s.dResT = di ? di.t : null; }
-              if (htfTouched(mtf, s, mtfF)) return;
               addResult(s);
             });
             scheduleRender();
@@ -755,10 +775,14 @@ async function scan() {
           const [ma, ltf] = await Promise.all([getK(w.symbol, 1, M.MD, LBm.mtf, true), getK(w.symbol, 2, M.LD, LBm.ltf)]);
           const mtfF = ma.length && ma[ma.length - 1].t + M.MD > now ? ma[ma.length - 1] : null, mtf = mtfF ? ma.slice(0, -1) : ma;
           processed.add(k);
-          const s = evaluate(w, mtf, ltf, M);
-          if (s) {
-            s.symbol = w.symbol; s.price = prices[w.symbol]; s.vol = w.vol; s.lhr = leftHand(ltf, s, M);
-            if (!htfTouched(mtf, s, mtfF)) { addResult(s); scheduleRender(); }
+          const s0 = evaluate(side === 'short' ? flipFields(w) : w, mtf, ltf, M);
+          if (s0) {
+            s0.lhr = leftHand(ltf, s0, M);
+            if (!htfTouched(mtf, s0, mtfF)) {
+              const s = side === 'short' ? flipFields(s0) : s0;
+              s.symbol = w.symbol; s.price = prices[w.symbol]; s.vol = w.vol; s.side = side;
+              addResult(s); scheduleRender();
+            }
           }
         } catch (e) {
           if (stopped || ctrl.signal.aborted) return;
@@ -781,7 +805,7 @@ async function scan() {
     if (md === mode) {
       watch = Array.from(keep.values()).filter(s => s.status === 'watching' && liveDay(s.dayT, M, now));
       recentTrig = Array.from(keep.values()).filter(s => s.status === 'triggered' && liveDay(s.dayT, M, now));
-      store.set('rs2_watch_' + md, watch); store.set('rs2_trig_' + md, recentTrig);
+      store.set('rs2_watch_' + skey(md), watch); store.set('rs2_trig_' + skey(md), recentTrig);
     }
     store.set('rs2_seen', Array.from(seen));
 
@@ -812,13 +836,17 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   if (running || m === mode) return;
   mode = m; saveCfg(); loadMode(); scanned.total = 0; setStatus('Ready', ''); render();
 }));
+['long', 'short'].forEach(sd => $('s-' + sd).addEventListener('click', () => {
+  if (running || sd === side) return;
+  side = sd; saveCfg(); loadMode(); scanned.total = 0; setStatus('Ready', ''); render();
+}));
 $('clearSeen').addEventListener('click', () => { seen = new Set(); seenAtStart = new Set(); store.set('rs2_seen', []); render(); });
 $('list').addEventListener('click', e => {
   const b = e.target.closest ? e.target.closest('.rm') : null;
   if (!b) return;
   const k = b.dataset.key;
   dismissed.add(k); store.set('rs2_dismissed', Array.from(dismissed));
-  watch = watch.filter(w => wkey(w) !== k); store.set('rs2_watch_' + mode, watch);
+  watch = watch.filter(w => wkey(w) !== k); store.set('rs2_watch_' + skey(mode), watch);
   results = results.filter(s => !(s.status === 'watching' && wkey(s) === k));
   render();
 });
@@ -826,6 +854,7 @@ $('list').addEventListener('click', e => {
 const cfg = store.get('rs2_cfg', null);
 if (cfg) {
   if (cfg.mode === 'W1') mode = 'W1';
+  if (cfg.side === 'short') side = 'short';
   $('maxPrice').value = cfg.maxPrice; $('minVol').value = cfg.minVol; $('sound').checked = cfg.sound !== false;
 }
 loadMode();
