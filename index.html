@@ -188,6 +188,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
       <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it (in H4 mode: the forming candle or either of the two closed ones before it); rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
+      <li>H4 mode extra rule: the rejected H4 level must sit inside a daily continuation candle. That is two bullish daily candles in a row, and the level is the close of the first one. The rejected support must be at that level or below it, and not lower than that candle's low. The level must be untouched: no daily candle after the pair has traded down to it, up to the day before the rejection. On the short side it is mirrored with two bearish daily candles, and the rejected resistance must be at that level or above it, up to that candle's high.</li>
       <li>Short side: the Short button runs every rule above mirrored. A resistance (bullish then bearish candle, at the bullish close) is rejected by a high that reaches it and a close back below it. The support to break is the highest bearish then bullish pair below it on the break timeframe, formed before the touch. The swing low is the low of the most recent valid correction in the bullish move into the resistance, and the trigger is a close below it. The target is the next support below, and a setup is dropped if price has already reached it without a close below. CRT sweeps the high of an untouched candle; LHR needs the resistance to belong to a different move.</li>
     </ol>
   </details>
@@ -203,7 +204,7 @@ const DAY = 864e5, WEEK = 7 * DAY, M15MS = 9e5, H1MS = 36e5, H4MS = 144e5;
 const MODES = {
   D1: { HD: DAY, MD: H4MS, LD: H1MS, iv: ['D', '240', '60'], names: ['D1', 'H4', 'H1'], keep: 3 * DAY, reset: 'daily reset', win: 2 },   // win = rejection-timeframe candles checked: the forming one plus (win - 1) closed
   W1: { HD: WEEK, MD: DAY, LD: H4MS, iv: ['W', 'D', '240'], names: ['W1', 'D1', 'H4'], keep: 14 * DAY, reset: 'weekly reset', win: 2 },
-  H4: { HD: H4MS, MD: H1MS, LD: M15MS, iv: ['240', '60', '15'], names: ['H4', 'H1', 'M15'], keep: 2 * DAY, reset: 'H4 candle close', win: 3 }
+  H4: { HD: H4MS, MD: H1MS, LD: M15MS, iv: ['240', '60', '15'], names: ['H4', 'H1', 'M15'], keep: 2 * DAY, reset: 'H4 candle close', win: 3, daily: true }
 };
 const bull = k => k.c > k.o, bear = k => k.c < k.o;
 
@@ -457,12 +458,30 @@ function htfTouched(mtf, s, form) {
   if (!all.some(k => k.t >= s.touchT && k.h >= s.dRes)) return false;
   return !mtf.some(k => k.t >= s.touchT && k.c > s.dRes);
 }
+// H4 mode only. The rejected H4 level must sit inside a daily "continuation" candle: two bullish daily candles in a row
+// (the short side runs this on flipped candles, so it reads as two bearish ones). The level is the close of the first candle.
+// The rejected level must be at that level or below it, and not below that candle's low. The level must be untouched: no
+// daily candle after the pair has traded down to it, up to the day before the rejection day.
+function dailyLine(daily, S, dayT) {
+  const dd = Math.floor(dayT / DAY) * DAY;
+  for (let i = 0; i + 1 < daily.length; i++) {
+    const a = daily[i], b = daily[i + 1];
+    if (b.t >= dd) break;
+    if (!(bull(a) && bull(b))) continue;
+    const L = a.c, eps = Math.abs(L) * 1e-9;
+    if (!(S <= L + eps && S >= a.l - eps)) continue;
+    let touched = false;
+    for (let k = i + 2; k < daily.length && daily[k].t < dd; k++) if (daily[k].l <= L) { touched = true; break; }
+    if (!touched) return { L, t: a.t };
+  }
+  return null;
+}
 // ==== LOGIC END
 
 // ---------- App ----------
 const HOSTS = ['https://api.bytick.com', 'https://api.bybit.com'];
 let hostIdx = 0;
-const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 }, H4: { htf: 250, mtf: 1000, ltf: 1000 } };
+const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 }, H4: { htf: 250, mtf: 1000, ltf: 1000, dly: 200 } };
 const CONC = 6, TIMEOUT = 15000;
 const COLS = ['snr', 'lhr', 'crt', 'both'];
 const $ = id => document.getElementById(id);
@@ -619,11 +638,11 @@ function render() {
   const hints = side === 'short' ? {
     D1: 'Short side. Resistance rejection on D1, support break on H4, swing-low close on H1.',
     W1: 'Short side. Resistance rejection on W1, support break on D1, swing-low close on H4.',
-    H4: 'Short side. Resistance rejection on H4, support break on H1, swing-low close on M15.'
+    H4: 'Short side. Resistance rejection on H4, support break on H1, swing-low close on M15. The rejected level must sit inside an untouched bearish daily continuation candle.'
   } : {
     D1: 'Rejection on D1, resistance break on H4, swing-high close on H1.',
     W1: 'Rejection on W1, resistance break on D1, swing-high close on H4.',
-    H4: 'Rejection on H4, resistance break on H1, swing-high close on M15. Checks the forming candle and 2 closed ones.'
+    H4: 'Rejection on H4, resistance break on H1, swing-high close on M15. Checks the forming candle and 2 closed ones. The rejected level must sit inside an untouched daily continuation candle.'
   };
   $('modeHint').textContent = hints[mode];
   ['long', 'short'].forEach(sd => { $('s-' + sd).setAttribute('aria-pressed', String(sd === side)); $('s-' + sd).disabled = running; });
@@ -716,7 +735,7 @@ async function scan() {
     setStatus('Scanning', `0 / ${scanned.total}`);
 
     const getK = async (sym, i, dur, n, keep) => {
-      const j = await api(`/v5/market/kline?category=spot&symbol=${sym}&interval=${M.iv[i]}&limit=${n}`, ctrl.signal);
+      const j = await api(`/v5/market/kline?category=spot&symbol=${sym}&interval=${i === 3 ? 'D' : M.iv[i]}&limit=${n}`, ctrl.signal);
       const kl = parseK(j.result.list, dur, now, keep);
       return side === 'short' ? kl.map(flipC) : kl;
     };
@@ -749,11 +768,16 @@ async function scan() {
             if (ix >= 0) cands.push({ h: ix === htf.length - 1 ? htf : htf.slice(0, ix + 1), forming: false });
           }
           if (formingK && htf.length && formingK.t === prevT + M.HD) cands.push({ h: htfAll, forming: true });
-          let mtf = null, ltf = null, mtfF = null;
+          let mtf = null, ltf = null, mtfF = null, dly = null;
           for (const cd of cands) {
             if (stopped) break;
-            const rejs = findRejections(cd.h, M);
+            let rejs = findRejections(cd.h, M);
             if (!rejs.length) continue;
+            if (M.daily) {
+              if (!dly) dly = await getK(p.symbol, 3, DAY, LBm.dly);
+              rejs = rejs.filter(r => dailyLine(dly, r.S, r.dayT));
+              if (!rejs.length) continue;
+            }
             if (!mtf) { const [ma, l2] = await Promise.all([getK(p.symbol, 1, M.MD, LBm.mtf, true), getK(p.symbol, 2, M.LD, LBm.ltf)]); ltf = l2; mtfF = ma.length && ma[ma.length - 1].t + M.MD > now ? ma[ma.length - 1] : null; mtf = mtfF ? ma.slice(0, -1) : ma; }
             tagRejections(rejs, cd.h, M);
             rejs.forEach(r => {
