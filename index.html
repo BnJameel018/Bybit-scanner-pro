@@ -559,7 +559,7 @@ function chartLink(s, M) {
   // Target: the next level on the rejection timeframe, as a ray, once the setup has triggered.
   if (s.status === 'triggered' && s.dRes !== null && s.dRes !== undefined) seg('tgt', s.dResT || s.touchT, 0, s.dRes, 'Target', [iv[0], iv[1], iv[2]]);
   const hint = `Support on ${n[0]}/${n[1]}/${n[2]} · Resistance on ${n[1]}/${n[2]} · Swing high on ${n[2]}`;
-  const payload = { sym: s.symbol, tf: iv[1], title: (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
+  const payload = { sym: s.symbol, tf: iv[0], title: (s.status === 'triggered' ? 'Triggered' : 'Watching') + ' · ' + n.join('/'), hint, start: s.touchT, marks: m };
   return CHART_URL + '?sig=' + encodeURIComponent(JSON.stringify(payload));
 }
 
