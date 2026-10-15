@@ -179,7 +179,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>Trigger: a break-timeframe close above the resistance, and a swing-high-timeframe close above the swing high, in either order. The swing high always sits to the left of the touch, inside the move that touched the support. A bearish move has lower highs, so if price trades above the move's top or closes above its last correction high, that move is over and the swing high is read again from the new top. A bounce in that move that trades above it with a wick replaces it, so the highest such wick is the level. Once the support is touched the level is fixed, and only a close above it counts. The swing high is the high of the most recent valid correction in the bearish move into the support: a bounce that trades above the high of the last impulse candle and is complete once price makes a new lower low (swings inside it are ignored). If price fell in one straight impulse, it is the high of the candle before the fall. It can sit below the resistance.</li>
       <li>Exception: if a later break-timeframe candle goes below the first touch's low and closes above the support, the highest unbroken resistance formed after the first touch replaces the original and follows the same trigger rule.</li>
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
-      <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
+      <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, no candle since has traded below that low or above that high, and the rejected support sits below that low.</li>
       <li>FRESH: a support created on the rejection timeframe after the rejection, a bearish candle then a bullish one, at the bearish close, where the bearish candle is the rejection candle or a later one. It must be untouched since it was created: no candle after the bullish one has traded down to it, the forming candle included. This column shows every triggered setup that has one, so a setup can also appear in its SNR, LHR or CRT column. If there are several, the most recent is shown.</li>
       <li>PERFECT CRT: a setup whose CRT (see above) has a doji as the candle that was swept: its body is at most 10% of its full high-to-low range, wherever the body sits (top, middle or bottom). The CRT rule itself is unchanged. This column shows every triggered setup that qualifies, so it also appears in its other columns.</li>
       <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it (in H4 mode: the forming candle or either of the two closed ones before it); rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
@@ -254,18 +254,18 @@ function findRejections(htf, M) {
 }
 
 // CRT: the last candle (the rejection candle) sweeps below the low of an earlier candle and closes back inside that
-// candle's range. That earlier candle must be untouched since it formed (no later candle traded below its low or above
+// candle's range. The rejected support S must sit below that low. That earlier candle must be untouched since it formed (no later candle traded below its low or above
 // its high), and the rejection candle itself must stay under its high. The nearest such candle is used.
 const DOJI = 0.1;   // a doji has a body of at most this share of the candle's full range
 const isDoji = k => k.h > k.l && Math.abs(k.c - k.o) <= DOJI * (k.h - k.l);
-function crtInfo(htf) {
+function crtInfo(htf, S) {
   const L = htf.length - 1;
   if (L < 1) return null;
   const D = htf[L];
   let minLow = Infinity, maxHigh = -Infinity;
   for (let x = L - 1; x >= 0; x--) {
     const X = htf[x];
-    if (minLow >= X.l && maxHigh <= X.h && D.l < X.l && D.h <= X.h && D.c > X.l) return { low: X.l, t: X.t, doji: isDoji(X) };
+    if (minLow >= X.l && maxHigh <= X.h && S < X.l && D.l < X.l && D.h <= X.h && D.c > X.l) return { low: X.l, t: X.t, doji: isDoji(X) };
     if (X.l < minLow) minLow = X.l;
     if (X.h > maxHigh) maxHigh = X.h;
   }
@@ -295,8 +295,9 @@ function leftHand(ltf, s, M) {
 
 // Adds age and CRT tags. LHR is set later, once the swing-high timeframe candles are loaded.
 function tagRejections(rejs, htf, M) {
-  const D = htf[htf.length - 1], crt = crtInfo(htf);
+  const D = htf[htf.length - 1];
   rejs.forEach(r => {
+    const crt = crtInfo(htf, r.S);
     r.age = D.t - r.createdT;
     r.lhr = false;
     r.crt = !!crt; r.crtDoji = !!(crt && crt.doji); r.crtLow = crt ? crt.low : null; r.crtT = crt ? crt.t : null;
