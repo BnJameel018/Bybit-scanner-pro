@@ -81,7 +81,6 @@ h1{margin:0; font-size:26px; line-height:1.1; font-weight:700; letter-spacing:-.
   appearance:none; border:0; background:var(--card); color:var(--mute); cursor:pointer;
   padding:12px 12px; font:600 13px var(--sans); display:flex; gap:8px; align-items:center; justify-content:space-between; text-align:left;
 }
-.tab.wide{grid-column:1/-1}
 .tab b{font:600 17px var(--mono); color:var(--ink)}
 .tab[aria-selected=true]{background:var(--accent); color:var(--on-accent)}
 .tab[aria-selected=true] b{color:var(--on-accent)}
@@ -163,7 +162,8 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
     <button class="tab" role="tab" id="tab-lhr" data-tab="lhr" aria-selected="false">SNR + LHR<b id="n-lhr">0</b></button>
     <button class="tab" role="tab" id="tab-crt" data-tab="crt" aria-selected="false">SNR + CRT<b id="n-crt">0</b></button>
     <button class="tab" role="tab" id="tab-both" data-tab="both" aria-selected="false">SNR + LHR + CRT<b id="n-both">0</b></button>
-    <button class="tab wide" role="tab" id="tab-fresh" data-tab="fresh" aria-selected="false">FRESH<b id="n-fresh">0</b></button>
+    <button class="tab" role="tab" id="tab-fresh" data-tab="fresh" aria-selected="false">FRESH<b id="n-fresh">0</b></button>
+    <button class="tab" role="tab" id="tab-pcrt" data-tab="pcrt" aria-selected="false">PERFECT CRT<b id="n-pcrt">0</b></button>
   </nav>
 
   <main class="list" id="list"></main>
@@ -181,6 +181,7 @@ details.rules ol{margin:10px 0 0; padding-left:20px; color:var(--mute); font-siz
       <li>The next resistance is the lowest one above the support on the rejection timeframe that price has not reached since it became resistance. A normal resistance, a flipped support (a support a candle closed below) and a reclaimed resistance (closed above, then back below) all count, and the same level is marked as the Target. A pair is dropped when, at scan time, price has reached that next resistance since the first touch (the still-forming break-timeframe candle counts), unless a break-timeframe candle has closed above that resistance since the first touch (H4 for a daily resistance, D1 for a weekly one).</li>
       <li>LHR (left hand): the support belongs to a different move from the fall that rejects at it. Read on the swing-high timeframe: the highest high between the support's bearish candle and the first touch must come after that candle, meaning price rallied away from the support and fell back. Flipped resistances are not tagged, since they are always left hands. CRT: the rejection candle sweeps below the low of an earlier candle and closes back inside that candle's range, stays under its high, and no candle since has traded below that low or above that high.</li>
       <li>FRESH: a support created on the rejection timeframe after the rejection, a bearish candle then a bullish one, at the bearish close, where the bearish candle is the rejection candle or a later one. It must be untouched since it was created: no candle after the bullish one has traded down to it, the forming candle included. This column shows every triggered setup that has one, so a setup can also appear in its SNR, LHR or CRT column. If there are several, the most recent is shown.</li>
+      <li>PERFECT CRT: a setup whose CRT (see above) has a doji as the candle that was swept: its body is at most 10% of its full high-to-low range, wherever the body sits (top, middle or bottom). The CRT rule itself is unchanged. This column shows every triggered setup that qualifies, so it also appears in its other columns.</li>
       <li>Only triggered setups are listed. The rejection must be on the candle still forming on the rejection timeframe or on the one just before it (in H4 mode: the forming candle or either of the two closed ones before it); rejections on older candles are ignored, and a setup disappears once its rejection candle is older than that. Incomplete setups are saved on this phone and rechecked on each scan, and appear once they trigger. A forming candle's price so far counts as its close, and the setup disappears on a later scan if that candle closes below the support.</li>
     </ol>
   </details>
@@ -255,6 +256,8 @@ function findRejections(htf, M) {
 // CRT: the last candle (the rejection candle) sweeps below the low of an earlier candle and closes back inside that
 // candle's range. That earlier candle must be untouched since it formed (no later candle traded below its low or above
 // its high), and the rejection candle itself must stay under its high. The nearest such candle is used.
+const DOJI = 0.1;   // a doji has a body of at most this share of the candle's full range
+const isDoji = k => k.h > k.l && Math.abs(k.c - k.o) <= DOJI * (k.h - k.l);
 function crtInfo(htf) {
   const L = htf.length - 1;
   if (L < 1) return null;
@@ -262,7 +265,7 @@ function crtInfo(htf) {
   let minLow = Infinity, maxHigh = -Infinity;
   for (let x = L - 1; x >= 0; x--) {
     const X = htf[x];
-    if (minLow >= X.l && maxHigh <= X.h && D.l < X.l && D.h <= X.h && D.c > X.l) return { low: X.l, t: X.t };
+    if (minLow >= X.l && maxHigh <= X.h && D.l < X.l && D.h <= X.h && D.c > X.l) return { low: X.l, t: X.t, doji: isDoji(X) };
     if (X.l < minLow) minLow = X.l;
     if (X.h > maxHigh) maxHigh = X.h;
   }
@@ -296,7 +299,7 @@ function tagRejections(rejs, htf, M) {
   rejs.forEach(r => {
     r.age = D.t - r.createdT;
     r.lhr = false;
-    r.crt = !!crt; r.crtLow = crt ? crt.low : null; r.crtT = crt ? crt.t : null;
+    r.crt = !!crt; r.crtDoji = !!(crt && crt.doji); r.crtLow = crt ? crt.low : null; r.crtT = crt ? crt.t : null;
   });
   return rejs;
 }
@@ -329,7 +332,7 @@ function correctionHigh(ltf, ref, LD) {
   return { h: ltf[idx].h, t: ltf[idx].t, afterT: ltf[e].t + LD, kind };
 }
 
-const RK = ['forming', 'S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'age', 'dRes', 'dResT', 'fS', 'fT'];
+const RK = ['forming', 'S', 'kind', 'reclaimed', 'brokeT', 'reclaimT', 'flipT', 'srcT', 'dayT', 'lhr', 'crt', 'crtLow', 'crtT', 'crtDoji', 'age', 'dRes', 'dResT', 'fS', 'fT'];
 const pick = r => { const o = {}; RK.forEach(k => { o[k] = r[k]; }); return o; };
 
 // Break-timeframe candles (mtf) and swing-high-timeframe candles (ltf), oldest first, closed only.
@@ -473,7 +476,7 @@ const HOSTS = ['https://api.bytick.com', 'https://api.bybit.com'];
 let hostIdx = 0;
 const LB = { D1: { htf: 365, mtf: 400, ltf: 1000 }, W1: { htf: 200, mtf: 400, ltf: 1000 }, H4: { htf: 250, mtf: 1000, ltf: 1000 } };
 const CONC = 6, TIMEOUT = 15000;
-const COLS = ['snr', 'lhr', 'crt', 'both', 'fresh'];
+const COLS = ['snr', 'lhr', 'crt', 'both', 'fresh', 'pcrt'];
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -570,6 +573,7 @@ function card(s) {
   const chips = [statusChip(s, M)];
   if (s.kind === 'flipped') chips.push(`<span class="chip idle">Flipped resistance</span>`);
   if (s.forming) chips.push(`<span class="chip idle">${n[0]} candle still forming</span>`);
+  if (s.crt && s.crtDoji) chips.push('<span class="chip idle">CRT candle is a doji</span>');
   if (s.reclaimed) chips.push('<span class="chip idle">Reclaimed once</span>');
 
   const rows = [];
@@ -591,8 +595,8 @@ function card(s) {
 }
 
 function render() {
-  const by = { snr: [], lhr: [], crt: [], both: [], fresh: [] };
-  results.filter(s => s.status === 'triggered').forEach(s => { by[colOf(s)].push(s); if (s.fS !== null && s.fS !== undefined) by.fresh.push(s); });
+  const by = { snr: [], lhr: [], crt: [], both: [], fresh: [], pcrt: [] };
+  results.filter(s => s.status === 'triggered').forEach(s => { by[colOf(s)].push(s); if (s.fS !== null && s.fS !== undefined) by.fresh.push(s); if (s.crt && s.crtDoji) by.pcrt.push(s); });
   COLS.forEach(k => {
     by[k].sort((a, b) => b.doneT - a.doneT);
     $('n-' + k).textContent = by[k].length;
